@@ -1,0 +1,16 @@
+---
+description: improving ability to gain context of files quickly
+globs: 
+alwaysApply: false
+---
+
+# Your rule content
+Documentation: Every file must start with a short description of its purpose for future AI reference.
+
+Modularity: Split files or functions if they exceed 50 lines to improve context retention and performance.
+
+Error Handling: Include try-except blocks for API calls and user inputs to prevent crashes.
+
+
+- You can @ files here
+- You can use markdown but dont have to
