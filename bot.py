@@ -1,9 +1,10 @@
 # bot.py
 # Main file to run the Telegram bot for message summarization
 import telebot
+import os
 from summarizer import summarize_messages
 
-bot = telebot.TeleBot("8033673928:AAFJ4H2c-1kan8ofRam0Ig2tbx16aGm8bLE")
+bot = telebot.TeleBot(os.environ.get("TELEGRAM_BOT_TOKEN"))
 chat_history = {}  # {chat_id: [list of messages]}
 chat_tones = {}  # {chat_id: tone}
 
