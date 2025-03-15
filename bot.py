@@ -153,7 +153,7 @@ def store_message(message):
         chat_id = str(message.chat.id)
         
         # Store the message using the TelegramBridge
-        telegram_bridge.store_message(message.__dict__)
+        telegram_bridge.store_message(message)
         
     except Exception as e:
         logger.error(f"Error in store_message: {e}")

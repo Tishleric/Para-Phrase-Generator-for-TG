@@ -151,23 +151,78 @@ class TelegramBridge:
         Args:
             message (Dict[str, Any]): Message dictionary
         """
-        # Get the chat ID from the message
-        chat_id = str(message.get('chat', {}).get('id', ''))
+        try:
+            # Check if this is a proper dictionary or a message object
+            if isinstance(message, dict):
+                # It's already a dictionary
+                chat = message.get('chat', {})
+                if isinstance(chat, dict):
+                    chat_id = str(chat.get('id', ''))
+                else:
+                    # The chat might be an object
+                    chat_id = str(getattr(chat, 'id', ''))
+            else:
+                # It's likely a message object that was converted to dict incorrectly
+                # Try to get the chat_id directly from the object
+                chat = getattr(message, 'chat', None)
+                if chat:
+                    chat_id = str(getattr(chat, 'id', ''))
+                else:
+                    logger.warning("Message has no chat attribute, skipping")
+                    return
+            
+            if not chat_id:
+                logger.warning("Message has no chat ID, skipping")
+                return
+            
+            # Convert to dictionary if it's not already
+            if not isinstance(message, dict):
+                # Extract key attributes manually
+                message_dict = {
+                    'message_id': getattr(message, 'message_id', None),
+                    'from_user': {
+                        'id': getattr(getattr(message, 'from_user', None), 'id', None),
+                        'username': getattr(getattr(message, 'from_user', None), 'username', None),
+                    },
+                    'chat': {
+                        'id': chat_id,
+                        'type': getattr(chat, 'type', None),
+                        'title': getattr(chat, 'title', None),
+                    },
+                    'date': getattr(message, 'date', None),
+                    'text': getattr(message, 'text', None),
+                }
+                
+                # Check for photo
+                if hasattr(message, 'photo') and message.photo:
+                    message_dict['photo'] = [
+                        {
+                            'file_id': photo.file_id,
+                            'file_unique_id': photo.file_unique_id,
+                            'width': photo.width,
+                            'height': photo.height,
+                            'file_size': getattr(photo, 'file_size', None)
+                        }
+                        for photo in message.photo
+                    ]
+                
+                # Use message_dict instead of message
+                message = message_dict
         
-        if not chat_id:
-            logger.warning("Message has no chat ID, skipping")
-            return
-        
-        # Initialize chat history for this chat if it doesn't exist
-        if chat_id not in self.chat_history:
-            self.chat_history[chat_id] = []
-        
-        # Add the message to the chat history
-        self.chat_history[chat_id].append(message)
-        
-        # Trim the chat history if it's too long
-        if len(self.chat_history[chat_id]) > MAX_MESSAGES_PER_CHAT:
-            self.chat_history[chat_id] = self.chat_history[chat_id][-MAX_MESSAGES_PER_CHAT:]
+            # Initialize chat history for this chat if it doesn't exist
+            if chat_id not in self.chat_history:
+                self.chat_history[chat_id] = []
+            
+            # Add the message to the chat history
+            self.chat_history[chat_id].append(message)
+            
+            # Trim the chat history if it's too long
+            if len(self.chat_history[chat_id]) > MAX_MESSAGES_PER_CHAT:
+                self.chat_history[chat_id] = self.chat_history[chat_id][-MAX_MESSAGES_PER_CHAT:]
+                
+        except Exception as e:
+            logger.error(f"Error in store_message: {e}")
+            logger.error(traceback.format_exc())
     
     async def handle_command_async(
         self, 
