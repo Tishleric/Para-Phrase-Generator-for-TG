@@ -46,7 +46,8 @@ class WebSearchTool:
     Web search tool for the OpenAI Assistants API.
     
     This class provides a web search tool that can be used with the OpenAI Assistants API.
-    The actual search is performed by OpenAI's built-in search capability.
+    Since the direct 'web_search' type is no longer supported, this implements a function
+    tool that can be used to perform web searches.
     
     Usage:
         tools = [WebSearchTool().as_tool()]
@@ -58,11 +59,22 @@ class WebSearchTool:
         Get the web search tool definition.
         
         Returns:
-            Dict: A web search tool definition
+            Dict: A web search function tool definition
         """
-        return {
-            "type": "web_search"
-        }
+        return function_tool(
+            name="web_search",
+            description="Search the web for information",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    }
+                },
+                "required": ["query"]
+            }
+        )
 
 
 class CodeInterpreterTool:
