@@ -313,82 +313,61 @@ class PhotoAgent(BaseAgent):
     
     def process_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Process a message to extract and analyze photos.
+        Process a message containing photo content.
+        
+        This method extracts photo content from a message, analyzes it using
+        OpenAI's vision capabilities, and returns the analysis results.
         
         Args:
-            message (Dict[str, Any]): The message to process
+            message (Dict[str, Any]): The message to process, containing photo data
             
         Returns:
-            Optional[Dict[str, Any]]: Analysis results or None if no photos found
+            Optional[Dict[str, Any]]: Analysis results, or None if no photos were found
+                                     or analysis failed
         """
-        # Skip processing for deaf tone
+        # Skip processing if the agent is not active (e.g., deaf tone)
         if not self.is_active:
             return None
-            
-        # Check if the message contains a photo
-        if "photo" not in message:
+        
+        # Skip if no model with vision capabilities is available
+        if not self.has_vision_capabilities:
+            logger.warning("Skipping photo analysis: No model with vision capabilities available")
             return None
-        
-        photo_data = message.get("photo", [])
-        if not photo_data or not isinstance(photo_data, list):
-            return None
-        
-        results = []
-        
-        for photo in photo_data:
-            # Extract file_id (for Telegram)
-            file_id = photo.get("file_id")
+
+        try:
+            # Check if the message has photo content
+            if 'photo' not in message and 'document' not in message:
+                return None
             
-            if not file_id:
-                logger.warning(f"No file_id for photo in message {message.get('message_id', 'unknown')}")
-                continue
+            # Get the photo file path
+            photo_file_path = None
             
-            # For Telegram integration, we'd need the bot token and API
-            # to get an actual file URL. Since we don't have that in this
-            # implementation, we'll create a placeholder URL for demonstration
+            if 'photo' in message:
+                # Get the photo with the highest resolution
+                photo = sorted(message['photo'], key=lambda p: p.get('file_size', 0), reverse=True)[0]
+                photo_file_path = photo.get('file_path')
             
-            # In a real Telegram bot implementation:
-            bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+            elif 'document' in message and message['document'].get('mime_type', '').startswith('image/'):
+                # Handle document that is an image
+                photo_file_path = message['document'].get('file_path')
             
-            if bot_token:
-                # If we have a bot token, we can construct a real URL
-                # 1. Get the file path first
-                file_info_url = f"https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}"
-                try:
-                    file_info = requests.get(file_info_url).json()
-                    if file_info.get("ok") and "result" in file_info:
-                        file_path = file_info["result"]["file_path"]
-                        # 2. Construct the download URL
-                        photo_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
-                        
-                        # 3. Analyze the image
-                        analysis = self._analyze_image(photo_url)
-                        results.append(analysis)
-                    else:
-                        logger.error(f"Failed to get file info: {file_info}")
-                except Exception as e:
-                    logger.error(f"Error getting file info: {str(e)}")
-            else:
-                # If we don't have a bot token, we'll use a dummy URL for demonstration
-                # In a real implementation, this would be replaced with actual file processing
-                sender = message.get('from', {}).get('username', 'Unknown')
-                logger.info(f"No bot token available, using dummy URL for photo from {sender}")
-                
-                # Here, in a real implementation, we would use the actual image data
-                # For now, just return a placeholder result
-                results.append({
-                    "error": "No bot token configured for photo download",
-                    "note": "Configure a Telegram bot token to enable photo analysis",
-                    "sender": sender
-                })
+            # Skip if no photo file path found
+            if not photo_file_path:
+                logger.warning("No photo file path found in message")
+                return None
+            
+            # Analyze the image
+            result = self._analyze_image(photo_file_path)
+            
+            # Return the analysis results
+            return result
         
-        if results:
+        except Exception as e:
+            logger.error(f"Error processing photo message: {str(e)}")
             return {
-                "photo_analyses": results,
-                "count": len(results)
+                "error": f"Failed to process photo: {str(e)}",
+                "description": "The system encountered an error while analyzing this image"
             }
-        
-        return None
     
     def process_images(self, messages: List[Dict[str, Any]]) -> Optional[str]:
         """

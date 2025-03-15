@@ -866,28 +866,8 @@ def function_tool(name, description, parameters=None):
 
 
 # Web search tool for the OpenAI Assistants API
-class WebSearchTool:
-    """
-    Web search tool for the OpenAI Assistants API.
-    
-    This class provides a web search tool that can be used with the OpenAI Assistants API.
-    The actual search is performed by OpenAI's built-in search capability.
-    
-    Usage:
-        tools = [WebSearchTool().as_tool()]
-    """
-    
-    @staticmethod
-    def as_tool():
-        """
-        Get the web search tool definition.
-        
-        Returns:
-            Dict: A web search tool definition
-        """
-        return {
-            "type": "web_search"
-        }
+# Using the implementation from assistants.tools instead
+from .assistants.tools import WebSearchTool
 
 
 # Backward compatibility with the older Agents SDK

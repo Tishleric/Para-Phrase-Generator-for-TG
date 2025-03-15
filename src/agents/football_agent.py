@@ -70,7 +70,7 @@ class FootballAgent(BaseAgent):
             self._analyze_match_information,
             self._detect_live_commentary,
             self._extract_teams_and_players,
-            WebSearchTool()  # Add web search capability
+            WebSearchTool().as_tool()  # Use the built-in web search capability
         ]
         
         super().__init__(
@@ -79,6 +79,8 @@ class FootballAgent(BaseAgent):
             model=get_agent_model("football"),
             tools=tools
         )
+        
+        logger.info("Football Agent initialized with web search capability")
         
         # Initialize common football teams dictionary for faster lookups
         self.teams_dict = {
@@ -129,8 +131,6 @@ class FootballAgent(BaseAgent):
             "enzo": "Enzo Fernández", "fernandez": "Enzo Fernández",
             "vinicius": "Vinícius Júnior", "vini": "Vinícius Júnior"
         }
-        
-        logger.info("Initialized Football Score Agent with web search capabilities")
     
     @function_tool
     def _extract_football_references(self, text: str) -> List[Dict[str, Any]]:

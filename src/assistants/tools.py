@@ -45,9 +45,7 @@ class WebSearchTool:
     """
     Web search tool for the OpenAI Assistants API.
     
-    This class provides a web search tool that can be used with the OpenAI Assistants API.
-    The actual search is performed by a function-based implementation that can be handled
-    by the application.
+    This class provides the built-in web search functionality from OpenAI.
     
     Usage:
         tools = [WebSearchTool().as_tool()]
@@ -56,27 +54,14 @@ class WebSearchTool:
     @staticmethod
     def as_tool() -> Dict:
         """
-        Get the web search tool definition.
+        Get the web search tool definition using OpenAI's built-in capability.
         
         Returns:
-            Dict: A web search tool definition as a function
+            Dict: A web search tool definition
         """
-        # Use function-based implementation instead of web_search type
-        # since web_search is not supported in all environments
-        return function_tool(
-            name="web_search",
-            description="Search the web for information",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query"
-                    }
-                },
-                "required": ["query"]
-            }
-        )
+        return {
+            "type": "web_search"
+        }
 
 
 class CodeInterpreterTool:
@@ -278,7 +263,12 @@ class ImageAnalysisTool:
     """
     Image analysis tool for the OpenAI Assistants API.
     
-    This class provides a tool that analyzes images from Telegram using file IDs.
+    This class provides a tool for analyzing images directly from Telegram messages
+    using OpenAI's vision-capable models. It extracts text content, identifies objects,
+    and generates descriptive summaries of images.
+    
+    The tool leverages the fetch_telegram_file utility to retrieve image data
+    from Telegram servers before processing it with OpenAI's API.
     
     Usage:
         tools = [ImageAnalysisTool().as_tool()]
@@ -286,83 +276,79 @@ class ImageAnalysisTool:
     
     def __init__(self):
         """
-        Initialize the ImageAnalysisTool.
+        Initialize the ImageAnalysisTool with OpenAI client and file fetching capability.
+        
+        Requires:
+            - OPENAI_API_KEY environment variable
+            - TELEGRAM_BOT_TOKEN environment variable (used by fetch_telegram_file)
         """
+        # Import here to avoid circular imports
         import os
-        self.bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
-        if not self.bot_token:
-            import logging
-            logging.warning("No Telegram bot token found. Image analysis will not work properly.")
+        import base64
+        from openai import OpenAI
+        from ..utils import fetch_telegram_file
+        
+        self.client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        self.fetch_telegram_file = fetch_telegram_file
     
     def analyze_image(self, file_id: str) -> Dict[str, Any]:
         """
-        Analyze an image from a Telegram file ID.
+        Analyze an image using OpenAI's vision-capable models.
+        
+        This method retrieves the image from Telegram servers using its file_id,
+        then sends it to OpenAI's API for analysis. The analysis includes
+        text extraction, object identification, and descriptive summary.
         
         Args:
             file_id (str): The Telegram file ID of the image to analyze
             
         Returns:
-            Dict[str, Any]: Analysis of the image content
+            Dict[str, Any]: Analysis results including:
+                - text_content: Any text detected in the image
+                - objects: List of objects identified in the image
+                - description: Detailed description of the image
+                - error: Error message if processing failed
         """
+        import io
         import logging
-        import requests
         import base64
-        from openai import OpenAI
+        import traceback
         
         logger = logging.getLogger(__name__)
         
         try:
-            if not self.bot_token:
+            # Fetch the image data from Telegram
+            logger.info(f"Fetching image with file_id: {file_id}")
+            image_data = self.fetch_telegram_file(file_id)
+            
+            if not image_data:
+                logger.error(f"Failed to fetch image with file_id: {file_id}")
                 return {
-                    "error": "No Telegram bot token configured",
-                    "description": "Image could not be analyzed because no Telegram bot token is configured."
+                    "text_content": "",
+                    "objects": [],
+                    "description": "Failed to process the image.",
+                    "error": "Image data could not be retrieved."
                 }
             
-            # Get the file path from Telegram
-            file_info_url = f"https://api.telegram.org/bot{self.bot_token}/getFile?file_id={file_id}"
-            file_info_response = requests.get(file_info_url)
-            file_info = file_info_response.json()
+            # Convert image data to base64
+            base64_image = base64.b64encode(image_data).decode('utf-8')
             
-            if not file_info.get("ok"):
-                return {
-                    "error": "Failed to get file info from Telegram",
-                    "description": f"Error: {file_info.get('description', 'Unknown error')}"
-                }
-            
-            # Get the file path
-            file_path = file_info["result"]["file_path"]
-            
-            # Construct the download URL
-            download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-            
-            # Download the image
-            image_response = requests.get(download_url)
-            if image_response.status_code != 200:
-                return {
-                    "error": "Failed to download image from Telegram",
-                    "description": f"HTTP status code: {image_response.status_code}"
-                }
-            
-            # Encode the image as base64
-            image_base64 = base64.b64encode(image_response.content).decode('utf-8')
-            
-            # Use OpenAI's vision capabilities to analyze the image
-            client = OpenAI()
-            response = client.chat.completions.create(
-                model="gpt-4o",
+            # Use GPT-4o for image analysis (vision-capable model)
+            response = self.client.chat.completions.create(
+                model="gpt-4o",  # Vision-capable model
                 messages=[
                     {
-                        "role": "system",
-                        "content": "You are a visual analysis assistant. Describe the image in detail, noting visible objects, people, text, colors, and context."
+                        "role": "system", 
+                        "content": "You are an AI that analyzes images. Identify text, objects, and provide a description."
                     },
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": "Please analyze this image and describe what you see:"},
+                            {"type": "text", "text": "Analyze this image and provide text content, objects, and a description."},
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_base64}"
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
                                 }
                             }
                         ]
@@ -371,100 +357,59 @@ class ImageAnalysisTool:
                 max_tokens=500
             )
             
-            # Extract the analysis from the response
+            # Extract the analysis
             analysis = response.choices[0].message.content
             
-            # Structure the analysis
+            # Parse the analysis for structured data
+            # This is a simple implementation; could be more sophisticated
+            text_content = ""
+            objects = []
+            description = analysis
+            
+            # Look for text content section
+            text_match = re.search(r'(?i)text content:?(.*?)(?:objects:|description:|$)', analysis, re.DOTALL)
+            if text_match:
+                text_content = text_match.group(1).strip()
+            
+            # Look for objects section
+            objects_match = re.search(r'(?i)objects:?(.*?)(?:text content:|description:|$)', analysis, re.DOTALL)
+            if objects_match:
+                objects_text = objects_match.group(1).strip()
+                # Split by commas or newlines
+                objects = [obj.strip() for obj in re.split(r'[,\n]', objects_text) if obj.strip()]
+            
+            # Look for description section
+            desc_match = re.search(r'(?i)description:?(.*?)(?:text content:|objects:|$)', analysis, re.DOTALL)
+            if desc_match:
+                description = desc_match.group(1).strip()
+            
             return {
-                "description": analysis,
-                "file_id": file_id,
-                "text_content": self._extract_text_content(analysis),
-                "objects": self._extract_objects(analysis)
+                "text_content": text_content,
+                "objects": objects,
+                "description": description,
+                "full_analysis": analysis  # Include the full analysis for reference
             }
             
         except Exception as e:
             logger.error(f"Error analyzing image: {str(e)}")
+            logger.error(traceback.format_exc())
             return {
-                "error": f"Failed to analyze image: {str(e)}",
-                "description": "An error occurred while analyzing the image."
+                "text_content": "",
+                "objects": [],
+                "description": "Failed to analyze the image due to an error.",
+                "error": str(e)
             }
     
-    def _extract_text_content(self, analysis: str) -> str:
+    def as_tool(self) -> Dict:
         """
-        Extract text content from the analysis.
-        
-        Args:
-            analysis (str): The analysis text
-            
-        Returns:
-            str: Extracted text content
-        """
-        import re
-        
-        # Look for text content in the analysis
-        text_patterns = [
-            r"The text (?:says|reads) [\"']([^\"']+)[\"']",
-            r"There is text that says [\"']([^\"']+)[\"']",
-            r"The text [\"']([^\"']+)[\"'] is visible",
-            r"Text visible: [\"']([^\"']+)[\"']"
-        ]
-        
-        for pattern in text_patterns:
-            matches = re.findall(pattern, analysis)
-            if matches:
-                return " ".join(matches)
-        
-        # If no text was found via patterns but "text" is mentioned
-        if "text" in analysis.lower():
-            # Look for sentence containing "text"
-            text_sentences = [s for s in analysis.split('.') if "text" in s.lower()]
-            if text_sentences:
-                return text_sentences[0].strip()
-        
-        return ""
-    
-    def _extract_objects(self, analysis: str) -> List[str]:
-        """
-        Extract objects from the analysis.
-        
-        Args:
-            analysis (str): The analysis text
-            
-        Returns:
-            List[str]: Extracted objects
-        """
-        import re
-        
-        # Extract objects using patterns
-        object_patterns = [
-            r"I can see ([^\.]+)",
-            r"The image shows ([^\.]+)",
-            r"There (?:is|are) ([^\.]+)",
-            r"The photo contains ([^\.]+)"
-        ]
-        
-        objects = []
-        for pattern in object_patterns:
-            matches = re.findall(pattern, analysis)
-            for match in matches:
-                # Split by commas and "and" to get individual objects
-                items = re.split(r',|\sand\s', match)
-                objects.extend([item.strip() for item in items if item.strip()])
-        
-        # Remove duplicates
-        return list(set(objects))
-    
-    @staticmethod
-    def as_tool() -> Dict:
-        """
-        Get the image analysis tool definition.
+        Get the image analysis tool definition for the OpenAI Assistants API.
         
         Returns:
             Dict: An image analysis tool definition
         """
         return function_tool(
             name="analyze_image",
-            description="Analyze an image from a Telegram file ID",
+            description="Analyze an image from Telegram to extract text, identify objects, and provide a description",
             parameters={
                 "type": "object",
                 "properties": {

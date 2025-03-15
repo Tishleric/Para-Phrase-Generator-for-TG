@@ -42,6 +42,8 @@ def generate_telegram_link(chat_id: str, message_id: int, text: str) -> str:
     # Create an HTML link
     html_link = f'<a href="{link}">{text}</a>'
     
+    logger.debug(f"Generated link: {html_link} for message_id {message_id}")
+    
     return html_link
 
 
@@ -68,7 +70,8 @@ def create_message_mapping(messages: List[Dict[str, Any]]) -> Dict[int, Dict[str
 def find_reference_candidates(
     messages: List[Dict[str, Any]],
     summary: str,
-    min_phrase_length: int = 5
+    min_phrase_length: int = 4,
+    max_phrase_length: int = 30
 ) -> List[Dict[str, Any]]:
     """
     Find candidate phrases in the summary that could reference original messages.
@@ -77,7 +80,9 @@ def find_reference_candidates(
         messages (List[Dict[str, Any]]): List of message dictionaries
         summary (str): The summary text
         min_phrase_length (int, optional): Minimum length of phrase to consider.
-            Defaults to 5.
+            Defaults to 4.
+        max_phrase_length (int, optional): Maximum length of phrase to consider.
+            Defaults to 30.
     
     Returns:
         List[Dict[str, Any]]: List of candidate references
@@ -92,30 +97,71 @@ def find_reference_candidates(
         if not text or len(text) < min_phrase_length:
             continue
         
-        # Look for phrases that are at least min_phrase_length characters
-        for i in range(len(text) - min_phrase_length + 1):
-            phrase = text[i:i + min_phrase_length]
+        # For longer messages, find the most significant phrases
+        if len(text) > max_phrase_length:
+            # Split into sentences if possible
+            sentences = re.split(r'[.!?]', text)
+            phrases = [s.strip() for s in sentences if len(s.strip()) >= min_phrase_length]
             
-            # Check if the phrase is in the summary
-            if phrase in summary:
+            # If no good sentences, take the first part of the message
+            if not phrases:
+                phrases = [text[:max_phrase_length]]
+        else:
+            phrases = [text]
+        
+        for phrase in phrases:
+            # Skip phrases that are too short
+            if len(phrase) < min_phrase_length:
+                continue
+                
+            # Check if the phrase is in the summary (case insensitive)
+            summary_lower = summary.lower()
+            phrase_lower = phrase.lower()
+            if phrase_lower in summary_lower:
+                # Find the actual case-preserved version in the summary
+                index = summary_lower.find(phrase_lower)
+                actual_phrase = summary[index:index + len(phrase)]
+                
                 candidates.append({
                     "message_id": message_id,
-                    "phrase": phrase,
+                    "phrase": actual_phrase,
                     "full_text": text,
-                    "index_in_summary": summary.find(phrase)
+                    "index_in_summary": index
                 })
     
     # Sort candidates by their position in the summary
     candidates.sort(key=lambda x: x["index_in_summary"])
     
-    return candidates
+    # Remove overlapping candidates (prefer longer phrases)
+    filtered_candidates = []
+    used_ranges = []
+    
+    for candidate in sorted(candidates, key=lambda x: len(x["phrase"]), reverse=True):
+        index = candidate["index_in_summary"]
+        end_index = index + len(candidate["phrase"])
+        
+        # Check if this candidate overlaps with an already used range
+        overlap = False
+        for start, end in used_ranges:
+            if (index <= end and end_index >= start):
+                overlap = True
+                break
+        
+        if not overlap:
+            filtered_candidates.append(candidate)
+            used_ranges.append((index, end_index))
+    
+    # Sort back by position in summary
+    filtered_candidates.sort(key=lambda x: x["index_in_summary"])
+    
+    return filtered_candidates
 
 
 def add_links_to_summary(
     summary: str,
     candidates: List[Dict[str, Any]],
     chat_id: str,
-    max_links: int = 5
+    max_links: int = 8
 ) -> str:
     """
     Add links to the summary for key phrases.
@@ -124,7 +170,7 @@ def add_links_to_summary(
         summary (str): The summary text
         candidates (List[Dict[str, Any]]): List of candidate references
         chat_id (str): The ID of the chat
-        max_links (int, optional): Maximum number of links to add. Defaults to 5.
+        max_links (int, optional): Maximum number of links to add. Defaults to 8.
     
     Returns:
         str: The summary with links added
@@ -134,9 +180,22 @@ def add_links_to_summary(
     
     # Limit the number of links
     if len(candidates) > max_links:
-        # Use a simple algorithm to distribute links throughout the summary
-        step = len(candidates) // max_links
-        selected_candidates = candidates[::step][:max_links]
+        # Use an algorithm to distribute links throughout the summary
+        summary_length = len(summary)
+        segment_size = summary_length // max_links
+        
+        selected_candidates = []
+        for i in range(max_links):
+            segment_start = i * segment_size
+            segment_end = (i + 1) * segment_size if i < max_links - 1 else summary_length
+            
+            # Find candidates in this segment
+            segment_candidates = [c for c in candidates if segment_start <= c["index_in_summary"] < segment_end]
+            
+            if segment_candidates:
+                # Choose the candidate with the most significant phrase (length is a simple heuristic)
+                selected = max(segment_candidates, key=lambda x: len(x["phrase"]))
+                selected_candidates.append(selected)
     else:
         selected_candidates = candidates
     

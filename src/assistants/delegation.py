@@ -61,13 +61,23 @@ class DelegationAssistant:
     
     def _initialize_assistants(self):
         """
-        Initialize all assistants needed for delegation.
+        Initialize all assistants.
         """
+        logger.info("Initializing assistants...")
+        
+        # Initialize the delegation assistant
         self._initialize_delegation_assistant()
+        
+        # Initialize the specialized assistants
         self._initialize_twitter_assistant()
         self._initialize_football_assistant()
         self._initialize_photo_assistant()
         self._initialize_tone_assistants()
+        
+        # Initialize the sports assistant
+        self._initialize_sports_assistant()
+        
+        logger.info("All assistants initialized.")
     
     def _initialize_delegation_assistant(self):
         """
@@ -490,6 +500,49 @@ class DelegationAssistant:
             self.tone_assistants[tone] = assistant.id
             logger.info(f"{tone.capitalize()} tone assistant initialized with ID {self.tone_assistants[tone]}")
     
+    def _initialize_sports_assistant(self):
+        """
+        Initialize the sports information assistant.
+        """
+        logger.info("Initializing sports information assistant...")
+        
+        # Define the tools for the sports assistant
+        tools = [
+            WebSearchTool().as_tool()
+        ]
+        
+        # Define the instructions for the sports assistant
+        instructions = """
+        You are a sports information assistant. Your task is to search for information about sports references.
+        
+        For each sports reference, use the web search tool to find the most relevant and recent information.
+        
+        Provide concise and accurate information about each reference, focusing on:
+        - Match results and scores
+        - Team or player statistics
+        - Recent news or developments
+        
+        Format your response as a dictionary where the keys are the sports and the values are the information.
+        """
+        
+        # Check if the assistant already exists
+        existing_assistants = self.assistants_manager.list_assistants(name="Sports Information Assistant")
+        
+        if existing_assistants:
+            # Use the existing assistant
+            self.sports_assistant_id = existing_assistants[0].id
+            logger.info(f"Using existing sports information assistant: {self.sports_assistant_id}")
+        else:
+            # Create a new assistant
+            assistant = self.assistants_manager.create_assistant(
+                name="Sports Information Assistant",
+                instructions=instructions,
+                tools=tools,
+                model="gpt-4o"
+            )
+            self.sports_assistant_id = assistant.id
+            logger.info(f"Created new sports information assistant: {self.sports_assistant_id}")
+    
     async def process_summary_request(
         self,
         messages: List[Dict[str, Any]],
@@ -500,141 +553,213 @@ class DelegationAssistant:
         Process a summary request.
         
         Args:
-            messages (List[Dict[str, Any]]): List of message dictionaries
+            messages (List[Dict[str, Any]]): The messages to summarize
             tone (str): The tone to use for the summary
-            message_mapping (Optional[Dict[int, Dict]]): Mapping of message IDs to messages
-            
+            message_mapping (Dict[int, Dict], optional): Mapping of message IDs to messages.
+                Used for message linking. Defaults to None.
+        
         Returns:
             str: The summary
         """
-        logger.info(f"Processing summary request with {len(messages)} messages in {tone} tone")
+        import logging
+        from ..config import ADD_MESSAGE_LINKS, ENABLE_IMAGE_ANALYSIS, MAX_LINKS_PER_SUMMARY
         
-        # Create a thread for the delegation assistant
-        thread = self.assistants_manager.create_thread()
+        logger = logging.getLogger(__name__)
         
-        # Format the messages for the delegation assistant
-        formatted_messages = self._format_messages_for_delegation(messages)
+        if not messages:
+            return "No messages to summarize."
         
-        # Add the formatted messages to the thread
-        self.assistants_manager.add_message(
-            thread_id=thread.id,
-            role="user",
-            content=f"Please summarize these messages in a {tone} tone:\n\n{formatted_messages}"
-        )
+        # Get or create a thread ID
+        thread_id = str(id(messages))
         
-        # Run the delegation assistant
-        run = await self.assistants_manager.create_run(
-            thread_id=thread.id,
-            assistant_id=self.assistant_id
-        )
-        
-        # Wait for the run to complete
-        run = await self.assistants_manager.wait_for_run(thread_id=thread.id, run_id=run.id)
-        
-        # Process the results
-        delegation_results = self._process_delegation_results(
-            self.assistants_manager.get_run_content(thread_id=thread.id, run_id=run.id)
-        )
-        
-        # Process Twitter content if needed
-        twitter_summaries = []
-        if delegation_results.get("has_twitter_links", False):
-            twitter_links = delegation_results.get("twitter_links", [])
-            if twitter_links:
-                twitter_summaries = await self._process_twitter_content(twitter_links, thread.id)
-        
-        # Process football content if needed
-        football_info = {}
-        if delegation_results.get("has_football_references", False):
-            football_references = delegation_results.get("football_references", [])
-            if football_references:
-                football_info = await self._process_football_content(football_references, thread.id)
-        
-        # Process photo content if needed
-        photo_descriptions = []
-        if delegation_results.get("has_photos", False):
-            photo_message_ids = delegation_results.get("photo_message_ids", [])
-            if photo_message_ids:
-                photo_descriptions = await self._process_photo_content(photo_message_ids, messages, thread.id)
-        
-        # Process sports content if needed
-        sports_info = {}
-        if delegation_results.get("has_sports_references", False):
-            sports = delegation_results.get("sports", [])
-            sports_references = delegation_results.get("sports_references", [])
-            if sports and sports_references:
-                sports_info = await self._process_sports_content(sports, sports_references, thread.id)
-        
-        # Get user profiles if needed
-        user_profiles = {}
-        if delegation_results.get("user_ids", []):
-            user_ids = delegation_results.get("user_ids", [])
-            if user_ids:
-                user_profiles = await self._get_user_profiles(user_ids)
-        
-        # Create a new thread for the tone-specific assistant
-        tone_thread = self.assistants_manager.create_thread()
-        
-        # Prepare the content for the tone-specific assistant
-        tone_content = f"Please summarize these messages in a {tone} tone:\n\n{formatted_messages}\n\n"
-        
-        # Add Twitter summaries if available
-        if twitter_summaries:
-            tone_content += "\nTwitter content:\n"
-            for summary in twitter_summaries:
-                tone_content += f"- {summary.get('url')}: {summary.get('summary')}\n"
-        
-        # Add football information if available
-        if football_info:
-            tone_content += "\nFootball information:\n"
-            for reference, info in football_info.items():
-                tone_content += f"- {reference}: {info}\n"
-        
-        # Add photo descriptions if available
-        if photo_descriptions:
-            tone_content += "\nPhoto descriptions:\n"
-            for description in photo_descriptions:
-                tone_content += f"- {description.get('description')}\n"
-        
-        # Add sports information if available
-        if sports_info:
-            tone_content += "\nSports information:\n"
-            for sport, info in sports_info.items():
-                tone_content += f"- {sport}: {info}\n"
-        
-        # Add user profiles if available
-        if user_profiles:
-            tone_content += "\nUser profiles:\n"
-            for user_id, profile in user_profiles.items():
-                tone_content += f"- User {user_id}: {profile}\n"
-        
-        # Add the content to the tone-specific thread
-        self.assistants_manager.add_message(
-            thread_id=tone_thread.id,
-            role="user",
-            content=tone_content
-        )
-        
-        # Get the assistant ID for the requested tone
-        tone_assistant_id = self.tone_assistants.get(tone)
-        
-        if not tone_assistant_id:
-            logger.warning(f"No assistant found for tone {tone}, using stoic tone")
-            tone_assistant_id = self.tone_assistants.get("stoic")
-        
-        # Run the tone-specific assistant
-        tone_run = await self.assistants_manager.create_run(
-            thread_id=tone_thread.id,
-            assistant_id=tone_assistant_id
-        )
-        
-        # Wait for the run to complete
-        tone_run = await self.assistants_manager.wait_for_run(thread_id=tone_thread.id, run_id=tone_run.id)
-        
-        # Get the summary from the tone-specific assistant
-        summary = self.assistants_manager.get_run_content(thread_id=tone_thread.id, run_id=tone_run.id)
-        
-        return summary
+        try:
+            # Format the messages for delegation
+            formatted_messages = self._format_messages_for_delegation(messages)
+            
+            # Create a message for the delegation assistant
+            delegation_message = f"Here are the messages to summarize:\n\n{formatted_messages}\n\nTone: {tone}\n\nPlease analyze these messages and determine which specialized assistants should be used to process different parts. Focus on identifying Twitter/X links, images/photos, sports-related content, and other specialized content."
+            
+            # Submit the message to the delegation assistant
+            logger.info(f"Submitting request to delegation assistant with thread ID: {thread_id}")
+            
+            try:
+                delegation_response = await self.assistants_manager.submit_message(
+                    self.assistant_id,
+                    delegation_message,
+                    thread_id
+                )
+            except Exception as e:
+                logger.error(f"Failed to submit message to delegation assistant: {e}")
+                logger.error(traceback.format_exc())
+                return f"Error: Failed to process with delegation assistant. Details: {str(e)}"
+            
+            # Process the delegation results
+            try:
+                delegation_results = self._process_delegation_results(delegation_response)
+                logger.info(f"Delegation results: {delegation_results}")
+            except Exception as e:
+                logger.error(f"Failed to process delegation results: {e}")
+                logger.error(traceback.format_exc())
+                return f"Error: Failed to process delegation results. Details: {str(e)}"
+            
+            # Process Twitter links if found
+            twitter_summaries = []
+            if delegation_results.get("twitter_links"):
+                twitter_links = delegation_results["twitter_links"]
+                logger.info(f"Processing {len(twitter_links)} Twitter links")
+                try:
+                    twitter_summaries = await self._process_twitter_content(twitter_links, thread_id)
+                except Exception as e:
+                    logger.error(f"Failed to process Twitter links: {e}")
+                    logger.error(traceback.format_exc())
+                    # Continue with the summary even if Twitter processing fails
+            
+            # Process football references if found
+            football_info = {}
+            if delegation_results.get("football_references"):
+                football_references = delegation_results["football_references"]
+                logger.info(f"Processing {len(football_references)} football references")
+                try:
+                    football_info = await self._process_football_content(football_references, thread_id)
+                except Exception as e:
+                    logger.error(f"Failed to process football references: {e}")
+                    logger.error(traceback.format_exc())
+                    # Continue with the summary even if football processing fails
+            
+            # Process photo content if found and if image analysis is enabled
+            photo_descriptions = []
+            if delegation_results.get("photo_message_ids") and ENABLE_IMAGE_ANALYSIS:
+                photo_message_ids = delegation_results["photo_message_ids"]
+                logger.info(f"Processing {len(photo_message_ids)} photos")
+                try:
+                    photo_descriptions = await self._process_photo_content(photo_message_ids, messages, thread_id)
+                except Exception as e:
+                    logger.error(f"Failed to process photos: {e}")
+                    logger.error(traceback.format_exc())
+                    # Continue with the summary even if photo processing fails
+            
+            # Process sports content if found
+            sports_info = {}
+            if delegation_results.get("sports_references") and delegation_results.get("sports"):
+                sports = delegation_results["sports"]
+                sports_references = delegation_results["sports_references"]
+                logger.info(f"Processing sports references for {sports}")
+                try:
+                    sports_info = await self._process_sports_content(sports, sports_references, thread_id)
+                except Exception as e:
+                    logger.error(f"Failed to process sports references: {e}")
+                    logger.error(traceback.format_exc())
+                    # Continue with the summary even if sports processing fails
+            
+            # Process user profiles if needed
+            user_profiles = {}
+            if delegation_results.get("user_ids"):
+                user_ids = delegation_results["user_ids"]
+                logger.info(f"Processing {len(user_ids)} user profiles")
+                try:
+                    user_profiles = await self._get_user_profiles(user_ids)
+                except Exception as e:
+                    logger.error(f"Failed to process user profiles: {e}")
+                    logger.error(traceback.format_exc())
+                    # Continue with the summary even if profile processing fails
+            
+            # Determine which tone assistant to use
+            if tone in self.tone_assistants:
+                tone_assistant_id = self.tone_assistants[tone]
+            else:
+                # Fall back to stoic tone if the requested tone is not available
+                logger.warning(f"Tone {tone} not available, falling back to stoic")
+                tone_assistant_id = self.tone_assistants["stoic"]
+            
+            # Create a message for the tone-specific assistant
+            tone_message = f"Please summarize the following messages in a {tone} tone:\n\n{formatted_messages}"
+            
+            # Add Twitter summary information if available
+            if twitter_summaries:
+                twitter_info = "\n\nTwitter/X Link Information:\n"
+                for i, summary in enumerate(twitter_summaries):
+                    twitter_info += f"{i+1}. {summary.get('url', 'Unknown URL')}: {summary.get('summary', 'No summary available')}\n"
+                tone_message += twitter_info
+            
+            # Add football information if available
+            if football_info:
+                football_data = "\n\nFootball Information:\n"
+                for team, info in football_info.items():
+                    football_data += f"{team}: {info}\n"
+                tone_message += football_data
+            
+            # Add photo descriptions if available
+            if photo_descriptions:
+                photo_data = "\n\nPhoto Content:\n"
+                for i, photo in enumerate(photo_descriptions):
+                    photo_data += f"Photo {i+1}: {photo.get('description', 'No description')}"
+                    if photo.get("text_content"):
+                        photo_data += f" (Text: {photo['text_content']})"
+                    photo_data += "\n"
+                tone_message += photo_data
+            
+            # Add sports information if available
+            if sports_info:
+                sports_data = "\n\nSports Information:\n"
+                for sport, info in sports_info.items():
+                    sports_data += f"{sport}: {info}\n"
+                tone_message += sports_data
+            
+            # Add user profile information if available
+            if user_profiles:
+                profile_data = "\n\nUser Profiles:\n"
+                for user_id, profile in user_profiles.items():
+                    profile_data += f"User {user_id}: {profile}\n"
+                tone_message += profile_data
+            
+            # Submit the message to the tone-specific assistant
+            logger.info(f"Submitting request to {tone} tone assistant")
+            try:
+                tone_response = await self.assistants_manager.submit_message(
+                    tone_assistant_id,
+                    tone_message,
+                    thread_id
+                )
+            except Exception as e:
+                logger.error(f"Failed to submit message to tone assistant: {e}")
+                logger.error(traceback.format_exc())
+                return f"Error: Failed to generate summary with {tone} tone. Details: {str(e)}"
+            
+            # Add links to the summary if configured
+            if ADD_MESSAGE_LINKS and message_mapping:
+                from ..assistants.linking import find_reference_candidates, add_links_to_summary
+                
+                try:
+                    # Find reference candidates in the summary
+                    chat_id = messages[0].get("chat", {}).get("id", "") if messages else ""
+                    candidates = find_reference_candidates(messages, tone_response)
+                    
+                    # Add links to the summary
+                    linked_summary = add_links_to_summary(
+                        tone_response, 
+                        candidates, 
+                        str(chat_id),
+                        max_links=MAX_LINKS_PER_SUMMARY
+                    )
+                    
+                    return linked_summary
+                except Exception as e:
+                    logger.error(f"Failed to add links to summary: {e}")
+                    logger.error(traceback.format_exc())
+                    # Return the unlinked summary if linking fails
+                    return tone_response
+            
+            return tone_response
+            
+        except Exception as e:
+            logger.error(f"Error processing summary request: {e}")
+            logger.error(traceback.format_exc())
+            
+            # Provide a detailed error message
+            error_details = str(e)
+            error_type = type(e).__name__
+            
+            return f"Error generating summary: {error_type} occurred. Details: {error_details}. Please check logs for more information."
     
     def _format_messages_for_delegation(self, messages: List[Dict[str, Any]]) -> str:
         """
@@ -644,33 +769,73 @@ class DelegationAssistant:
             messages (List[Dict[str, Any]]): List of message dictionaries
         
         Returns:
-            str: Formatted messages
+            str: Formatted messages as a string
         """
+        import re
+        
         formatted_messages = []
         
-        for msg in messages:
-            # Get basic message info
-            message_id = msg.get("message_id")
-            from_user = msg.get("from", {})
-            username = from_user.get("username", "Unknown")
-            text = msg.get("text", "")
-            date = msg.get("date", "")
+        # URL regex pattern that matches common URL formats
+        url_pattern = re.compile(
+            r'(https?://)?'  # http:// or https:// (optional)
+            r'((?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)'  # domain
+            r'(/[^/\s]*)?'   # path (optional)
+        )
+        
+        # Twitter/X URL pattern
+        twitter_pattern = re.compile(
+            r'https?://(twitter\.com|x\.com)/[a-zA-Z0-9_]+/status/\d+'
+        )
+        
+        # Image/photo recognition pattern
+        photo_pattern = re.compile(r'\bphoto\b|\bimage\b|\bpicture\b', re.IGNORECASE)
+        
+        for message in messages:
+            user_info = f"User {message.get('from', {}).get('id', 'unknown')}"
+            username = message.get('from', {}).get('username')
+            if username:
+                user_info += f" (@{username})"
             
-            # Check for photos
-            has_photo = "photo" in msg
-            photo_info = ""
-            if has_photo:
-                photo_info = " [Contains photo]"
+            text = message.get('text', '')
             
-            # Check for reply
-            reply_to = msg.get("reply_to_message")
-            reply_info = ""
+            # Process URLs with special handling
+            if text:
+                # Highlight Twitter/X links
+                text = twitter_pattern.sub(r'[TWITTER_LINK: \g<0>]', text)
+                
+                # Mark other URLs clearly
+                text = url_pattern.sub(r'[URL: \g<0>]', text)
+            
+            # Check if the message has a photo
+            if 'photo' in message:
+                photo_id = message.get('photo', [{}])[-1].get('file_id', '')
+                text += f" [PHOTO: {photo_id}]"
+            
+            # Check for other media types
+            if 'document' in message:
+                file_name = message.get('document', {}).get('file_name', 'unnamed_file')
+                file_id = message.get('document', {}).get('file_id', '')
+                text += f" [DOCUMENT: {file_name} ({file_id})]"
+            
+            if 'video' in message:
+                file_id = message.get('video', {}).get('file_id', '')
+                text += f" [VIDEO: {file_id}]"
+            
+            if 'voice' in message:
+                file_id = message.get('voice', {}).get('file_id', '')
+                text += f" [VOICE: {file_id}]"
+            
+            # Format reply messages
+            reply_to = message.get('reply_to_message')
             if reply_to:
-                reply_username = reply_to.get("from", {}).get("username", "Unknown")
-                reply_info = f" [In reply to {reply_username}]"
+                reply_text = reply_to.get('text', '')
+                if reply_text:
+                    # Truncate long replies
+                    if len(reply_text) > 50:
+                        reply_text = reply_text[:47] + '...'
+                    text = f"[In reply to: \"{reply_text}\"] {text}"
             
-            # Format the message
-            formatted_message = f"Message ID: {message_id} | {username}{photo_info}{reply_info}: {text}"
+            formatted_message = f"{user_info}: {text}"
             formatted_messages.append(formatted_message)
         
         return "\n".join(formatted_messages)
@@ -1002,93 +1167,90 @@ class DelegationAssistant:
         thread_id: str
     ) -> Dict[str, str]:
         """
-        Process sports content using web search.
+        Process sports content using the sports information assistant.
         
         Args:
-            sports (List[str]): List of sports mentioned in the messages
-            sports_references (List[str]): List of sports references found in the messages
-            thread_id (str): The ID of the thread
-            
+            sports (List[str]): List of sports to process
+            sports_references (List[str]): List of sports references to process
+            thread_id (str): The thread ID for the delegation
+        
         Returns:
             Dict[str, str]: Dictionary mapping sports to information
         """
-        logger.info(f"Processing sports content: {sports}")
+        if not sports or not sports_references:
+            return {}
         
-        # Create a new thread for the web search
-        search_thread = self.assistants_manager.create_thread()
+        logger.info(f"Processing sports information for {sports}")
         
-        # Prepare the content for the web search
-        search_content = "Please search for information about the following sports references:\n\n"
+        # Create a new thread for the sports assistant
+        sports_thread = await self.assistants_manager.async_create_thread()
+        sports_thread_id = sports_thread.id
         
-        for i, (sport, reference) in enumerate(zip(sports, sports_references)):
-            search_content += f"{i+1}. Sport: {sport}, Reference: {reference}\n"
+        # Create the content for the sports assistant
+        sports_content = f"Please provide information about the following sports references:\n\n"
+        sports_content += f"Sports: {', '.join(sports)}\n\n"
+        sports_content += f"References: {', '.join(sports_references)}\n\n"
+        sports_content += "Please search for recent information and provide a concise summary for each sport."
         
-        # Add the content to the search thread
-        self.assistants_manager.add_message(
-            thread_id=search_thread.id,
-            role="user",
-            content=search_content
+        # Add the content to the thread
+        await self.assistants_manager.thread_manager.async_add_message(
+            thread_id=sports_thread_id,
+            content=sports_content,
+            role="user"
         )
         
-        # Create a web search assistant
-        web_search_assistant = self.assistants_manager.create_assistant(
-            name="Sports Web Search Assistant",
-            instructions="""
-            You are a sports information assistant. Your task is to search for information about sports references.
-            
-            For each sports reference, use the web search tool to find the most relevant and recent information.
-            
-            Provide concise and accurate information about each reference, focusing on:
-            - Match results and scores
-            - Team or player statistics
-            - Recent news or developments
-            
-            Format your response as a dictionary where the keys are the sports and the values are the information.
-            """,
-            tools=[WebSearchTool().as_tool()],
-            model="gpt-4o"
-        )
-        
-        # Run the web search assistant
-        search_run = await self.assistants_manager.create_run(
-            thread_id=search_thread.id,
-            assistant_id=web_search_assistant.id
+        # Run the sports assistant
+        sports_run = await self.assistants_manager.async_run_assistant(
+            assistant_id=self.sports_assistant_id,
+            thread_id=sports_thread_id
         )
         
         # Wait for the run to complete
-        search_run = await self.assistants_manager.wait_for_run(thread_id=search_thread.id, run_id=search_run.id)
+        completed_sports_run = await self.assistants_manager._async_run_until_complete(
+            thread_id=sports_thread_id,
+            run_id=sports_run.id,
+            timeout=60
+        )
         
-        # Get the search results
-        search_results = self.assistants_manager.get_run_content(thread_id=search_thread.id, run_id=search_run.id)
+        if completed_sports_run.status != "completed":
+            logger.error(f"Sports assistant run failed with status {completed_sports_run.status}")
+            return {}
         
-        # Parse the search results
-        sports_info = {}
+        # Get the latest message from the sports assistant
+        sports_response = await self.assistants_manager.async_get_latest_message(sports_thread_id)
         
+        if not sports_response:
+            logger.error("No response from sports assistant")
+            return {}
+        
+        # Extract the content from the sports response
+        sports_content = self.assistants_manager.get_message_content(sports_response)
+        
+        # Parse the sports content as a dictionary
         try:
-            # Try to parse the results as a dictionary
-            import re
-            import json
-            
-            # Look for a dictionary-like structure in the results
-            dict_pattern = r'\{[^{}]*\}'
-            dict_match = re.search(dict_pattern, search_results)
-            
-            if dict_match:
-                dict_str = dict_match.group(0)
-                sports_info = json.loads(dict_str)
+            # Look for JSON content in the response
+            json_match = re.search(r'{.*}', sports_content, re.DOTALL)
+            if json_match:
+                sports_info = json.loads(json_match.group(0))
             else:
-                # If no dictionary is found, create a simple mapping
-                for sport, reference in zip(sports, sports_references):
-                    sports_info[sport] = f"Information about {reference}"
-        except Exception as e:
-            logger.error(f"Error parsing sports search results: {e}")
-            logger.error(traceback.format_exc())
-            
-            # Fallback: create a simple mapping
-            for sport, reference in zip(sports, sports_references):
-                sports_info[sport] = f"Information about {reference}"
+                # If no JSON found, try to extract key-value pairs
+                sports_info = {}
+                for sport in sports:
+                    sport_lower = sport.lower()
+                    # Try to extract information about this sport
+                    sport_match = re.search(
+                        rf'{sport}\s*:\s*(.*?)(?=\n\n|\n[A-Z]|\Z)',
+                        sports_content,
+                        re.IGNORECASE | re.DOTALL
+                    )
+                    if sport_match:
+                        sports_info[sport] = sport_match.group(1).strip()
         
-        return sports_info
+            return sports_info
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"Failed to parse sports content: {e}")
+            logger.error(f"Sports content: {sports_content}")
+            return {}
     
     async def _get_user_profiles(self, user_ids: List[str]) -> Dict[str, str]:
         """

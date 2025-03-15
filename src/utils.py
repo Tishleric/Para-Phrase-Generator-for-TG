@@ -428,4 +428,68 @@ class TelegramBridge:
         except Exception as e:
             logger.error(f"Error processing summary request: {e}")
             logger.error(traceback.format_exc())
-            return format_error_message(e) 
+            return format_error_message(e)
+
+def fetch_telegram_file(file_id: str) -> Optional[bytes]:
+    """
+    Fetch a file from Telegram servers using the file ID.
+    
+    This function uses the Telegram Bot API to retrieve a file using its file_id.
+    It requires a TELEGRAM_BOT_TOKEN environment variable to be set.
+    
+    Args:
+        file_id (str): The Telegram file ID to retrieve
+        
+    Returns:
+        Optional[bytes]: The file content as bytes, or None if retrieval failed
+    
+    Note:
+        This function handles all error cases and returns None on failure,
+        logging appropriate error messages for debugging.
+    """
+    import os
+    import logging
+    import requests
+    
+    logger = logging.getLogger(__name__)
+    
+    # Get the bot token from environment
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not bot_token:
+        logger.error("No Telegram bot token found in environment variables")
+        return None
+    
+    try:
+        # Step 1: Get the file path from Telegram
+        file_info_url = f"https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}"
+        file_info_response = requests.get(file_info_url, timeout=10)
+        file_info = file_info_response.json()
+        
+        if not file_info.get("ok"):
+            logger.error(f"Failed to get file info from Telegram: {file_info.get('description', 'Unknown error')}")
+            return None
+        
+        # Step 2: Get the file path
+        file_path = file_info["result"]["file_path"]
+        
+        # Step 3: Construct the download URL
+        download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+        
+        # Step 4: Download the file
+        file_response = requests.get(download_url, timeout=20)
+        if file_response.status_code != 200:
+            logger.error(f"Failed to download file from Telegram: HTTP status code {file_response.status_code}")
+            return None
+        
+        # Return the file content
+        return file_response.content
+        
+    except requests.exceptions.Timeout:
+        logger.error(f"Timeout fetching Telegram file: {file_id}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"RequestException fetching Telegram file: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error fetching Telegram file: {e}")
+        return None 

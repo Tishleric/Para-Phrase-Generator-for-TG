@@ -6,6 +6,7 @@ import logging
 import traceback
 from dotenv import load_dotenv
 from typing import Dict, List, Any, Optional, Union
+import sys
 
 # Import utility functions and classes
 from src.telegram_bridge import TelegramBridge, format_error_message
@@ -14,7 +15,7 @@ from src.utils import extract_command_args
 # Import configuration
 from src.config import (
     DEBUG_MODE, USE_AGENT_SYSTEM, MAX_MESSAGES_PER_CHAT,
-    AVAILABLE_TONES, DEFAULT_TONE
+    AVAILABLE_TONES, DEFAULT_TONE, ADD_MESSAGE_LINKS, ENABLE_IMAGE_ANALYSIS
 )
 
 # Configure logging
@@ -27,12 +28,17 @@ logger = logging.getLogger(__name__)
 # Load environment variables from .env file
 load_dotenv()
 
+# Set default environment
+ENVIRONMENT = os.environ.get('BOT_ENVIRONMENT', 'production')
+logger.info(f"Bot running in {ENVIRONMENT} environment")
+
 # Print startup information
 token = os.environ.get("TELEGRAM_BOT_TOKEN")
 if token:
     # Mask the token for security, only show first 10 chars
     masked_token = token[:10] + "..." + token[-5:]
     print(f"Starting bot with token: {masked_token}")
+    print(f"Environment: {ENVIRONMENT}")
     print("Bot is initializing...")
 else:
     print("ERROR: No Telegram token found in environment variables!")
@@ -198,12 +204,30 @@ if __name__ == "__main__":
     
     # Log startup information
     logger.info("Para-Phrase Generator is starting")
+    logger.info(f"Environment: {ENVIRONMENT}")
     logger.info(f"Debug mode: {DEBUG_MODE}")
     logger.info(f"Agent system: {'Enabled' if USE_AGENT_SYSTEM else 'Disabled'}")
+    logger.info(f"Message linking: {'Enabled' if ADD_MESSAGE_LINKS else 'Disabled'}")
+    logger.info(f"Image analysis: {'Enabled' if ENABLE_IMAGE_ANALYSIS else 'Disabled'}")
     
     # Check for API keys
     if not os.environ.get("OPENAI_API_KEY"):
         logger.warning("No OpenAI API key found. Agent system will fail.")
     
+    if not os.environ.get("TELEGRAM_BOT_TOKEN"):
+        logger.error("No Telegram bot token found. Bot will fail to initialize.")
+        sys.exit(1)
+    
+    # Check for Twitter API token
+    if os.environ.get("TWITTER_BEARER_TOKEN"):
+        logger.info("Twitter API token found. Twitter link parsing will be fully functional.")
+    else:
+        logger.warning("No Twitter API token found. Twitter link processing will be limited.")
+    
     # Start the bot
-    bot.polling(none_stop=True) 
+    try:
+        bot.polling(none_stop=True)
+    except Exception as e:
+        logger.error(f"Critical error in bot polling: {e}")
+        logger.error(traceback.format_exc())
+        sys.exit(1) 

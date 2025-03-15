@@ -16,20 +16,58 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
+# Environment settings
+BOT_ENVIRONMENT = os.environ.get("BOT_ENVIRONMENT", "production")
+DEBUG_MODE = os.environ.get("DEBUG_MODE", "False").lower() == "true"
+
+# Environment-specific configurations
+ENV_CONFIG = {
+    "production": {
+        "USE_AGENT_SYSTEM": True,
+        "MAX_MESSAGES_PER_CHAT": 100,
+        "DEFAULT_TONE": "stoic",
+        "MAX_BASE_TOKENS": 250,
+        "MAX_TOTAL_TOKENS": 500,
+        "ADD_MESSAGE_LINKS": True,
+        "ENABLE_IMAGE_ANALYSIS": True,
+        "MAX_LINKS_PER_SUMMARY": 8,
+    },
+    "staging": {
+        "USE_AGENT_SYSTEM": True,
+        "MAX_MESSAGES_PER_CHAT": 100,
+        "DEFAULT_TONE": "stoic",
+        "MAX_BASE_TOKENS": 250,
+        "MAX_TOTAL_TOKENS": 500,
+        "ADD_MESSAGE_LINKS": True,
+        "ENABLE_IMAGE_ANALYSIS": True,
+        "MAX_LINKS_PER_SUMMARY": 8,
+    }
+}
+
+# Override configuration based on environment
+current_env_config = ENV_CONFIG.get(BOT_ENVIRONMENT, ENV_CONFIG["production"])
+
+# Update configuration with environment-specific settings
+USE_AGENT_SYSTEM = os.environ.get("USE_AGENT_SYSTEM", str(current_env_config["USE_AGENT_SYSTEM"])).lower() == "true"
+MAX_MESSAGES_PER_CHAT = int(os.environ.get("MAX_MESSAGES_PER_CHAT", str(current_env_config["MAX_MESSAGES_PER_CHAT"])))
+DEFAULT_TONE = os.environ.get("DEFAULT_TONE", current_env_config["DEFAULT_TONE"])
+MAX_BASE_TOKENS = int(os.environ.get("MAX_BASE_TOKENS", str(current_env_config["MAX_BASE_TOKENS"])))
+MAX_TOTAL_TOKENS = int(os.environ.get("MAX_TOTAL_TOKENS", str(current_env_config["MAX_TOTAL_TOKENS"])))
+ADD_MESSAGE_LINKS = os.environ.get("ADD_MESSAGE_LINKS", str(current_env_config["ADD_MESSAGE_LINKS"])).lower() == "true"
+ENABLE_IMAGE_ANALYSIS = os.environ.get("ENABLE_IMAGE_ANALYSIS", str(current_env_config["ENABLE_IMAGE_ANALYSIS"])).lower() == "true"
+MAX_LINKS_PER_SUMMARY = int(os.environ.get("MAX_LINKS_PER_SUMMARY", str(current_env_config["MAX_LINKS_PER_SUMMARY"])))
+
 # Feature flags
-USE_AGENT_SYSTEM = os.environ.get("USE_AGENT_SYSTEM", "True").lower() == "true"
+# USE_AGENT_SYSTEM is already set above
 
 # Message history configuration
 MAX_MESSAGES_PER_CHAT = 100  # Maximum number of messages to store per chat
 
 # Default tone configuration
-DEFAULT_TONE = "stoic"
 AVAILABLE_TONES = ["stoic", "chaotic", "pubbie", "deaf"]
 
 # Summarization configuration
-MAX_BASE_TOKENS = 250  # Base tokens for summarization
 TOKENS_PER_MESSAGE = 10  # Additional tokens per message
-MAX_TOTAL_TOKENS = 500  # Maximum total tokens
 
 # Agent configuration
 AGENT_TIER_MAPPING = {
@@ -54,9 +92,6 @@ MODEL_PROVIDER_MAPPING = {
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0  # seconds
-
-# Debugging
-DEBUG_MODE = os.environ.get("DEBUG_MODE", "False").lower() == "true"
 
 # Initialize model utility instance
 _model_utility = None

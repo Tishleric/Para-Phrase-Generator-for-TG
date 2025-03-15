@@ -15,7 +15,7 @@ import json
 
 from .config import (
     DEBUG_MODE, USE_AGENT_SYSTEM, MAX_MESSAGES_PER_CHAT,
-    AVAILABLE_TONES, DEFAULT_TONE
+    AVAILABLE_TONES, DEFAULT_TONE, ADD_MESSAGE_LINKS
 )
 from .assistants import DelegationAssistant, ProfileAssistant
 from .assistants.linking import create_message_mapping, find_reference_candidates, add_links_to_summary
@@ -248,52 +248,57 @@ class TelegramBridge:
         Handle the /last command.
         
         Args:
-            message (Dict[str, Any]): The message containing the command
-            args (List[str]): The command arguments
-            
+            message (Dict[str, Any]): The message dictionary
+            args (List[str]): Command arguments (number of messages to summarize)
+        
         Returns:
-            Optional[str]: The response to the command, or None if the command
-                was not handled
+            Optional[str]: Summary of the last N messages, or None if error
         """
-        if not args:
-            return "Please specify the number of messages to summarize."
-        
         try:
-            count = int(args[0])
-        except ValueError:
-            return "Please specify a valid number of messages to summarize."
-        
-        if count <= 0:
-            return "Please specify a positive number of messages to summarize."
-        
-        chat_id = str(message.get("chat", {}).get("id", "unknown"))
-        
-        if chat_id not in self.chat_history or not self.chat_history[chat_id]:
-            return "No messages to summarize."
-        
-        # Get the tone for this chat
-        tone = self.get_chat_tone(chat_id)
-        
-        # Get the most recent 'count' messages
-        messages = self.chat_history[chat_id][-count:] if count <= len(self.chat_history[chat_id]) else self.chat_history[chat_id]
-        
-        # Create a mapping of message IDs to messages
-        message_mapping = create_message_mapping(messages)
-        
-        # Generate the summary
-        summary = await self.delegation_assistant.process_summary_request(
-            messages=messages,
-            tone=tone,
-            message_mapping=message_mapping
-        )
-        
-        # Find reference candidates for linking
-        candidates = find_reference_candidates(messages, summary)
-        
-        # Add links to the summary
-        linked_summary = add_links_to_summary(summary, candidates, chat_id)
-        
-        return linked_summary
+            # Parse the message count
+            if not args:
+                return "Please specify the number of messages to summarize."
+            
+            try:
+                count = int(args[0])
+            except ValueError:
+                return "Please specify a valid number of messages to summarize."
+            
+            if count <= 0:
+                return "Please specify a positive number of messages to summarize."
+            
+            # Get the chat ID
+            chat_id = str(message.get("chat", {}).get("id", ""))
+            
+            # Get the messages to summarize
+            if chat_id not in self.chat_history or not self.chat_history[chat_id]:
+                return "No messages to summarize."
+            
+            # Get the most recent N messages
+            messages_to_summarize = self.chat_history[chat_id][-count:]
+            
+            # Get the chat tone
+            tone = self.get_chat_tone(chat_id)
+            
+            # Always create a mapping of message IDs to messages for linking
+            message_mapping = create_message_mapping(messages_to_summarize)
+            
+            # Get the delegation assistant
+            delegation_assistant = DelegationAssistant()
+            
+            # Process the summary request
+            summary = await delegation_assistant.process_summary_request(
+                messages_to_summarize,
+                tone,
+                message_mapping
+            )
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error handling /last command: {e}")
+            logger.error(traceback.format_exc())
+            return format_error_message(e)
     
     async def _handle_profile_command(
         self,
