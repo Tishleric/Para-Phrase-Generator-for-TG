@@ -776,4 +776,23 @@ class AssistantsManager:
         finally:
             os.unlink(temp_file_path)
         
-        return result 
+        return result
+    
+    def list_assistants(self, name=None):
+        """
+        List all assistants, optionally filtered by name.
+        
+        Args:
+            name (str, optional): Name filter for assistants. Defaults to None.
+            
+        Returns:
+            List of assistants matching the criteria
+        """
+        assistants = self.client.sync_client.beta.assistants.list()
+        
+        if name:
+            # Filter assistants by name if provided
+            filtered_assistants = [a for a in assistants.data if a.name == name]
+            return filtered_assistants
+        
+        return assistants.data 
