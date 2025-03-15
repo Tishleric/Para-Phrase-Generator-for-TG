@@ -110,7 +110,13 @@ def last_messages(message):
         
         if USE_AGENT_SYSTEM:
             # Use the TelegramBridge to handle the command
-            response = telegram_bridge.handle_command(message.__dict__, command, args)
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                response = loop.run_until_complete(telegram_bridge.handle_command(message.__dict__, command, args))
+            finally:
+                loop.close()
             
             if response:
                 # Delete the processing message
@@ -147,13 +153,41 @@ def last_messages(message):
         logger.error(traceback.format_exc())
         bot.reply_to(message, format_error_message(e))
 
+@bot.message_handler(commands=['profile'])
+def profile_command(message):
+    try:
+        # Extract the arguments from the message
+        command, args = extract_command_args(message.text)
+        
+        if USE_AGENT_SYSTEM:
+            # Use the TelegramBridge to handle the command
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                response = loop.run_until_complete(telegram_bridge.handle_command(message.__dict__, command, args))
+            finally:
+                loop.close()
+            
+            if response:
+                bot.reply_to(message, response)
+                return
+        
+        # If we get here, either agent system is disabled or the command wasn't handled
+        bot.reply_to(message, "Profile command is only available with the agent system enabled.")
+        
+    except Exception as e:
+        logger.error(f"Error in profile_command: {e}")
+        logger.error(traceback.format_exc())
+        bot.reply_to(message, format_error_message(e))
+
 @bot.message_handler(func=lambda message: True)
 def store_message(message):
     try:
         chat_id = str(message.chat.id)
         
         # Store the message using the TelegramBridge
-        telegram_bridge.store_message(message)
+        telegram_bridge.store_message(message.__dict__)
         
     except Exception as e:
         logger.error(f"Error in store_message: {e}")
@@ -168,10 +202,7 @@ if __name__ == "__main__":
     logger.info(f"Agent system: {'Enabled' if USE_AGENT_SYSTEM else 'Disabled'}")
     
     # Check for API keys
-    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
-        logger.warning("No Anthropic or OpenAI API key found. Summarization will fail.")
-    
-    if USE_AGENT_SYSTEM and not os.environ.get("OPENAI_API_KEY"):
+    if not os.environ.get("OPENAI_API_KEY"):
         logger.warning("No OpenAI API key found. Agent system will fail.")
     
     # Start the bot

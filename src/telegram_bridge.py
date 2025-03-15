@@ -17,8 +17,9 @@ from .config import (
     DEBUG_MODE, USE_AGENT_SYSTEM, MAX_MESSAGES_PER_CHAT,
     AVAILABLE_TONES, DEFAULT_TONE
 )
-from .assistants import DelegationAssistant
+from .assistants import DelegationAssistant, ProfileAssistant
 from .assistants.linking import create_message_mapping, find_reference_candidates, add_links_to_summary
+from .vector_store import UserProfileStore
 
 # Configure logging
 logging.basicConfig(
@@ -55,6 +56,8 @@ class TelegramBridge:
         chat_history (Dict[str, List[Dict[str, Any]]]): Dictionary of chat histories
         chat_tones (Dict[str, str]): Dictionary of chat tones
         delegation_assistant (DelegationAssistant): The delegation assistant instance
+        profile_assistant (ProfileAssistant): The profile assistant instance
+        profile_store (UserProfileStore): The user profile store
     """
     
     def __init__(
@@ -74,18 +77,21 @@ class TelegramBridge:
         self.chat_history = chat_history or {}
         self.chat_tones = chat_tones or {}
         self.delegation_assistant = None
+        self.profile_assistant = None
+        self.profile_store = UserProfileStore()
         
-        # Only initialize the delegation assistant if USE_AGENT_SYSTEM is True
+        # Only initialize the assistants if USE_AGENT_SYSTEM is True
         if USE_AGENT_SYSTEM:
             try:
                 self.delegation_assistant = DelegationAssistant()
-                logger.info("TelegramBridge initialized with delegation assistant")
+                self.profile_assistant = ProfileAssistant(profile_store=self.profile_store)
+                logger.info("TelegramBridge initialized with delegation and profile assistants")
             except Exception as e:
-                logger.error(f"Failed to initialize delegation assistant: {e}")
+                logger.error(f"Failed to initialize assistants: {e}")
                 logger.error(traceback.format_exc())
-                logger.warning("TelegramBridge initialized without delegation assistant")
+                logger.warning("TelegramBridge initialized without assistants")
         else:
-            logger.info("TelegramBridge initialized without delegation assistant (agent system disabled)")
+            logger.info("TelegramBridge initialized without assistants (agent system disabled)")
     
     def get_chat_tone(self, chat_id: Union[str, int]) -> str:
         """
@@ -98,241 +104,275 @@ class TelegramBridge:
             str: The chat tone
         """
         # Convert chat_id to string if it's an integer
-        chat_id_str = str(chat_id)
+        chat_id = str(chat_id)
         
-        # Return the tone for the chat, or the default tone if not set
-        return self.chat_tones.get(chat_id_str, DEFAULT_TONE)
+        # Return the tone for this chat, or the default tone if not set
+        return self.chat_tones.get(chat_id, DEFAULT_TONE)
     
-    def set_chat_tone(self, chat_id: Union[str, int], tone: str) -> None:
+    def set_chat_tone(self, chat_id: Union[str, int], tone: str) -> bool:
         """
         Set the tone for a specific chat.
         
         Args:
             chat_id (Union[str, int]): Chat ID
-            tone (str): Tone to set
-        """
-        # Convert chat_id to string if it's an integer
-        chat_id_str = str(chat_id)
-        
-        # Set the tone for the chat
-        self.chat_tones[chat_id_str] = tone
-        logger.info(f"Set tone for chat {chat_id_str} to {tone}")
-    
-    def get_message_history(
-        self, 
-        chat_id: Union[str, int], 
-        count: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Get the message history for a specific chat.
-        
-        Args:
-            chat_id (Union[str, int]): Chat ID
-            count (Optional[int]): Number of messages to retrieve
+            tone (str): The tone to set
             
         Returns:
-            List[Dict[str, Any]]: List of message dictionaries
+            bool: True if the tone was set successfully, False otherwise
         """
         # Convert chat_id to string if it's an integer
-        chat_id_str = str(chat_id)
+        chat_id = str(chat_id)
         
-        # Get the message history for the chat
-        messages = self.chat_history.get(chat_id_str, [])
+        # Check if the tone is valid
+        if tone not in AVAILABLE_TONES:
+            return False
         
-        # Return the requested number of messages, or all messages if count is None
-        if count is not None and count > 0:
-            return messages[-count:]
-        return messages
+        # Set the tone
+        self.chat_tones[chat_id] = tone
+        return True
     
     def store_message(self, message: Dict[str, Any]) -> None:
         """
         Store a message in the chat history.
         
         Args:
-            message (Dict[str, Any]): Message dictionary
+            message (Dict[str, Any]): The message to store
         """
-        try:
-            # Check if this is a proper dictionary or a message object
-            if isinstance(message, dict):
-                # It's already a dictionary
-                chat = message.get('chat', {})
-                if isinstance(chat, dict):
-                    chat_id = str(chat.get('id', ''))
-                else:
-                    # The chat might be an object
-                    chat_id = str(getattr(chat, 'id', ''))
-            else:
-                # It's likely a message object that was converted to dict incorrectly
-                # Try to get the chat_id directly from the object
-                chat = getattr(message, 'chat', None)
-                if chat:
-                    chat_id = str(getattr(chat, 'id', ''))
-                else:
-                    logger.warning("Message has no chat attribute, skipping")
-                    return
-            
-            if not chat_id:
-                logger.warning("Message has no chat ID, skipping")
-                return
-            
-            # Convert to dictionary if it's not already
-            if not isinstance(message, dict):
-                # Extract key attributes manually
-                message_dict = {
-                    'message_id': getattr(message, 'message_id', None),
-                    'from_user': {
-                        'id': getattr(getattr(message, 'from_user', None), 'id', None),
-                        'username': getattr(getattr(message, 'from_user', None), 'username', None),
-                    },
-                    'chat': {
-                        'id': chat_id,
-                        'type': getattr(chat, 'type', None),
-                        'title': getattr(chat, 'title', None),
-                    },
-                    'date': getattr(message, 'date', None),
-                    'text': getattr(message, 'text', None),
-                }
-                
-                # Check for photo
-                if hasattr(message, 'photo') and message.photo:
-                    message_dict['photo'] = [
-                        {
-                            'file_id': photo.file_id,
-                            'file_unique_id': photo.file_unique_id,
-                            'width': photo.width,
-                            'height': photo.height,
-                            'file_size': getattr(photo, 'file_size', None)
-                        }
-                        for photo in message.photo
-                    ]
-                
-                # Use message_dict instead of message
-                message = message_dict
+        # Extract the chat ID
+        chat_id = str(message.get("chat", {}).get("id", "unknown"))
         
-            # Initialize chat history for this chat if it doesn't exist
-            if chat_id not in self.chat_history:
-                self.chat_history[chat_id] = []
+        # Initialize the chat history for this chat if it doesn't exist
+        if chat_id not in self.chat_history:
+            self.chat_history[chat_id] = []
+        
+        # Add the message to the chat history
+        self.chat_history[chat_id].append(message)
+        
+        # Limit the number of messages stored
+        if len(self.chat_history[chat_id]) > MAX_MESSAGES_PER_CHAT:
+            self.chat_history[chat_id] = self.chat_history[chat_id][-MAX_MESSAGES_PER_CHAT:]
+        
+        # Process the message for user profile updates
+        if self.profile_assistant:
+            # Initialize the user profile if it doesn't exist
+            if "from" in message and message["from"]:
+                self.profile_assistant.initialize_user_from_telegram(message["from"])
             
-            # Add the message to the chat history
-            self.chat_history[chat_id].append(message)
-            
-            # Trim the chat history if it's too long
-            if len(self.chat_history[chat_id]) > MAX_MESSAGES_PER_CHAT:
-                self.chat_history[chat_id] = self.chat_history[chat_id][-MAX_MESSAGES_PER_CHAT:]
-                
+            # Process the message asynchronously
+            asyncio.create_task(self._process_message_for_profile(message))
+    
+    async def _process_message_for_profile(self, message: Dict[str, Any]) -> None:
+        """
+        Process a message for user profile updates.
+        
+        Args:
+            message (Dict[str, Any]): The message to process
+        """
+        if not self.profile_assistant:
+            return
+        
+        try:
+            # Process the message
+            await self.profile_assistant.process_messages([message])
         except Exception as e:
-            logger.error(f"Error in store_message: {e}")
+            logger.error(f"Error processing message for profile: {e}")
             logger.error(traceback.format_exc())
     
-    async def handle_command_async(
-        self, 
-        message: Dict[str, Any], 
-        command: str, 
+    async def handle_command(
+        self,
+        message: Dict[str, Any],
+        command: str,
         args: List[str]
     ) -> Optional[str]:
         """
-        Handle a command from a Telegram message asynchronously.
+        Handle a command from the user.
         
         Args:
-            message (Dict[str, Any]): Message dictionary
-            command (str): Command to handle
-            args (List[str]): Command arguments
+            message (Dict[str, Any]): The message containing the command
+            command (str): The command name
+            args (List[str]): The command arguments
             
         Returns:
-            Optional[str]: Response to send, or None if no response
+            Optional[str]: The response to the command, or None if the command
+                was not handled
         """
-        # Get the chat ID from the message
-        chat_id = str(message.get('chat', {}).get('id', ''))
-        
-        if not chat_id:
-            logger.warning("Message has no chat ID, skipping")
-            return None
-        
-        # Skip agent processing if disabled
+        # Check if the agent system is enabled
         if not USE_AGENT_SYSTEM or not self.delegation_assistant:
-            logger.info("Agent system is disabled or delegation assistant is not initialized, skipping")
             return None
         
-        try:
-            # Handle tone command
-            if command == "/tone" and args:
-                tone = args[0].lower()
-                
-                # Validate the tone
-                if tone not in AVAILABLE_TONES:
-                    return f"Invalid tone. Available tones: {', '.join(AVAILABLE_TONES)}"
-                
-                # Set the tone for the chat
-                self.set_chat_tone(chat_id, tone)
-                return f"Tone set to {tone}!"
-            
-            # Handle last command
-            elif command == "/last" and args:
-                try:
-                    # Parse the count argument
-                    count = int(args[0])
-                    
-                    # Validate the count
-                    if count <= 0:
-                        return "Please specify a positive number of messages to summarize."
-                    
-                    # Get the message history
-                    messages = self.get_message_history(chat_id, count)
-                    
-                    if not messages:
-                        return "No messages to summarize."
-                    
-                    # Get the tone for the chat
-                    tone = self.get_chat_tone(chat_id)
-                    
-                    # Create a message mapping for linking
-                    message_mapping = create_message_mapping(messages)
-                    
-                    # Process the request using the delegation assistant
-                    summary = await self.delegation_assistant.process_summary_request(
-                        messages=messages,
-                        tone=tone,
-                        message_mapping=message_mapping
-                    )
-                    
-                    # Add links to the summary
-                    candidates = find_reference_candidates(messages, summary)
-                    linked_summary = add_links_to_summary(summary, candidates, chat_id)
-                    
-                    return linked_summary
-                    
-                except ValueError:
-                    return "Please specify a valid number of messages to summarize."
-            
-            # Unknown command or missing arguments
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error handling command: {e}")
-            logger.error(traceback.format_exc())
-            return format_error_message(e)
+        # Handle the command
+        if command == "tone":
+            return await self._handle_tone_command(message, args)
+        elif command == "last":
+            return await self._handle_last_command(message, args)
+        elif command == "profile":
+            return await self._handle_profile_command(message, args)
+        
+        return None
     
-    def handle_command(
-        self, 
-        message: Dict[str, Any], 
-        command: str, 
+    async def _handle_tone_command(
+        self,
+        message: Dict[str, Any],
         args: List[str]
     ) -> Optional[str]:
         """
-        Handle a command from a Telegram message.
+        Handle the /tone command.
         
         Args:
-            message (Dict[str, Any]): Message dictionary
-            command (str): Command to handle
-            args (List[str]): Command arguments
+            message (Dict[str, Any]): The message containing the command
+            args (List[str]): The command arguments
             
         Returns:
-            Optional[str]: Response to send, or None if no response
+            Optional[str]: The response to the command, or None if the command
+                was not handled
         """
-        # Run the async handler in a new event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        if not args:
+            return f"Please specify a tone. Available tones: {', '.join(AVAILABLE_TONES)}"
+        
+        tone = args[0].lower()
+        
+        if tone not in AVAILABLE_TONES:
+            return f"Invalid tone. Available tones: {', '.join(AVAILABLE_TONES)}"
+        
+        chat_id = str(message.get("chat", {}).get("id", "unknown"))
+        self.chat_tones[chat_id] = tone
+        
+        return f"Tone set to {tone}!"
+    
+    async def _handle_last_command(
+        self,
+        message: Dict[str, Any],
+        args: List[str]
+    ) -> Optional[str]:
+        """
+        Handle the /last command.
+        
+        Args:
+            message (Dict[str, Any]): The message containing the command
+            args (List[str]): The command arguments
+            
+        Returns:
+            Optional[str]: The response to the command, or None if the command
+                was not handled
+        """
+        if not args:
+            return "Please specify the number of messages to summarize."
+        
         try:
-            return loop.run_until_complete(self.handle_command_async(message, command, args))
-        finally:
-            loop.close() 
+            count = int(args[0])
+        except ValueError:
+            return "Please specify a valid number of messages to summarize."
+        
+        if count <= 0:
+            return "Please specify a positive number of messages to summarize."
+        
+        chat_id = str(message.get("chat", {}).get("id", "unknown"))
+        
+        if chat_id not in self.chat_history or not self.chat_history[chat_id]:
+            return "No messages to summarize."
+        
+        # Get the tone for this chat
+        tone = self.get_chat_tone(chat_id)
+        
+        # Get the most recent 'count' messages
+        messages = self.chat_history[chat_id][-count:] if count <= len(self.chat_history[chat_id]) else self.chat_history[chat_id]
+        
+        # Create a mapping of message IDs to messages
+        message_mapping = create_message_mapping(messages)
+        
+        # Generate the summary
+        summary = await self.delegation_assistant.process_summary_request(
+            messages=messages,
+            tone=tone,
+            message_mapping=message_mapping
+        )
+        
+        # Find reference candidates for linking
+        candidates = find_reference_candidates(messages, summary)
+        
+        # Add links to the summary
+        linked_summary = add_links_to_summary(summary, candidates, chat_id)
+        
+        return linked_summary
+    
+    async def _handle_profile_command(
+        self,
+        message: Dict[str, Any],
+        args: List[str]
+    ) -> Optional[str]:
+        """
+        Handle the /profile command.
+        
+        Args:
+            message (Dict[str, Any]): The message containing the command
+            args (List[str]): The command arguments
+            
+        Returns:
+            Optional[str]: The response to the command, or None if the command
+                was not handled
+        """
+        if not self.profile_assistant:
+            return "Profile assistant is not available."
+        
+        # Get the user ID
+        user_id = None
+        
+        if args:
+            # Try to parse the user ID from the arguments
+            try:
+                user_id = int(args[0])
+            except ValueError:
+                # Check if it's a username
+                username = args[0].lstrip('@')
+                
+                # Look for the user in the chat history
+                chat_id = str(message.get("chat", {}).get("id", "unknown"))
+                if chat_id in self.chat_history:
+                    for msg in self.chat_history[chat_id]:
+                        if msg.get("from", {}).get("username") == username:
+                            user_id = msg.get("from", {}).get("id")
+                            break
+        else:
+            # Use the sender's user ID
+            user_id = message.get("from", {}).get("id")
+        
+        if not user_id:
+            return "Could not determine the user ID. Please specify a valid user ID or username."
+        
+        # Get the user profile
+        profile = self.profile_assistant.get_user_profile(user_id)
+        
+        if not profile:
+            return f"No profile found for user ID {user_id}."
+        
+        # Get the user interests
+        interests = self.profile_assistant.get_user_interests(user_id)
+        
+        # Format the profile information
+        profile_text = f"Profile for user ID {user_id}:\n\n"
+        
+        # Add basic information
+        metadata = profile.get("metadata", {})
+        if metadata.get("first_name"):
+            profile_text += f"First Name: {metadata['first_name']}\n"
+        
+        if metadata.get("last_name"):
+            profile_text += f"Last Name: {metadata['last_name']}\n"
+        
+        if metadata.get("username"):
+            profile_text += f"Username: @{metadata['username']}\n"
+        
+        profile_text += "\n"
+        
+        # Add interests
+        if interests:
+            profile_text += "Interests:\n"
+            
+            for category, items in interests.items():
+                profile_text += f"\n{category.capitalize()}:\n"
+                for item in items:
+                    profile_text += f"- {item}\n"
+        else:
+            profile_text += "No interests found."
+        
+        return profile_text 

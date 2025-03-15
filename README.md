@@ -1,124 +1,112 @@
-# Telegram Message Summarization Bot (Para-Phrase Generator)
+# Para-Phrase Generator
 
-A Telegram bot that summarizes messages using a multi-agent architecture with OpenAI Agents.
+A Telegram bot that leverages OpenAI's APIs to provide intelligent conversation, information retrieval, and user profile management.
 
 ## Features
 
-- Summarize recent messages with the `/last N` command
-- Customize summary tone with `/tone TYPE` (stoic, chaotic, pubbie, deaf)
-- Multi-agent architecture for specialized content processing:
-  - Twitter link detection and summarization
-  - Image content analysis
-  - Football score context
-  - User profile-aware personalization
+- **Message Summarization**: Summarizes conversations and provides concise responses.
+- **Image Analysis**: Processes and analyzes images shared in the chat.
+- **Link Processing**: Extracts and processes information from shared links.
+- **Real-time Information**: Retrieves up-to-date information using web search capabilities.
+- **Sports Information**: Provides real-time sports updates and information.
+- **User Profile Management**: Maintains user profiles with preferences and interests.
 
 ## Architecture
 
-The bot uses a multi-agent architecture based on the OpenAI Agents SDK:
+The bot is built with a modular architecture:
 
-- **Delegation Agent**: Routes requests to specialized agents based on content
-- **Tone-Specific Agents**: Generate summaries in different tones (stoic, chaotic, pubbie, deaf)
-- **Specialized Content Agents**: Process specific content types (Twitter links, images, etc.)
-- **Context Management**: Maintains state across agent handoffs
+- **Core Components**:
+  - `TelegramBridge`: Handles Telegram API interactions
+  - `AssistantsManager`: Manages OpenAI Assistants API integration
+  - `UserProfileStore`: Vector database for user profile storage
+  - `DelegationAssistant`: Routes messages to appropriate specialized assistants
+
+- **Specialized Assistants**:
+  - `ProfileAssistant`: Extracts and manages user profile information
+  - `WebSearchAssistant`: Performs web searches for real-time information
+  - `SportsAssistant`: Retrieves sports-related information
+  - `PhotoAssistant`: Processes and analyzes images
 
 ## Setup
 
 ### Prerequisites
 
-- Python 3.8+
-- A Telegram Bot token (from [BotFather](https://t.me/botfather))
-- Anthropic API key (for legacy summarization)
-- OpenAI API key (for agent-based summarization)
+- Python 3.9+
+- OpenAI API key
+- Telegram Bot Token
 
 ### Installation
 
 1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/para-phrase-generator.git
-cd para-phrase-generator
-```
+   ```
+   git clone <repository-url>
+   cd Para-Phrase-Generator
+   ```
 
-2. Create a virtual environment (optional but recommended):
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+2. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-4. Create your environment file:
-```bash
-cp .env.example .env
-# Edit .env with your API keys and tokens
-```
-
-### Configuration
-
-Edit the `.env` file with your API keys and configuration options:
-
-```
-# API Keys
-ANTHROPIC_API_KEY=your_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
-TELEGRAM_BOT_TOKEN=your_telegram_token_here
-
-# Feature Flags
-DEBUG_MODE=false
-USE_AGENT_SYSTEM=true
-```
-
-- `USE_AGENT_SYSTEM`: Set to `true` to use the new agent-based architecture, or `false` to use the legacy system
-- `DEBUG_MODE`: Set to `true` to enable debug logging
+3. Create a `.env` file with the following variables:
+   ```
+   OPENAI_API_KEY=your_openai_api_key
+   TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+   ```
 
 ### Running the Bot
 
-```bash
-python bot.py
+Run the bot using:
+```
+python run.py
 ```
 
-## Testing the Agent Framework
+## Testing
 
-To test the new agent framework:
+The project includes several test scripts to verify functionality:
 
-```bash
-python -m src.test_agents
+- `test_vector_store.py`: Tests the user profile vector store
+- `test_assistants.py`: Tests the OpenAI Assistants API integration
+- `test_profile_assistant.py`: Tests the profile assistant functionality
+
+Run tests using:
+```
+python test_vector_store.py
+python test_assistants.py
+python test_profile_assistant.py
 ```
 
-## Project Structure
+## Commands
 
-```
-├── bot.py                  # Main Telegram bot implementation
-├── summarizer.py           # Legacy summarization engine
-├── requirements.txt        # Project dependencies
-├── .env.example            # Example environment variables
-├── .gitignore              # Git ignore rules
-├── README.md               # This file
-├── Procfile                # Heroku deployment configuration
-└── src/                    # New agent-based architecture
-    ├── __init__.py
-    ├── config.py           # Configuration and settings
-    ├── utils.py            # Utility functions
-    ├── test_agents.py      # Test script for agents
-    └── agents/             # Agent implementations
-        ├── __init__.py
-        ├── base_agent.py   # Base agent class
-        ├── delegation_agent.py  # Main orchestration agent
-        └── tone_agent.py   # Tone-specific summary agent
-```
+The bot supports the following commands:
 
-## Usage
-
-1. Add the bot to a Telegram group
-2. The bot will listen to all messages and store them
-3. Use `/last N` to get a summary of the last N messages (e.g., `/last 10`)
-4. Use `/tone TYPE` to set the summary tone (stoic, chaotic, pubbie, deaf)
+- `/start`: Initiates conversation with the bot
+- `/help`: Displays help information
+- `/profile`: Shows the user's profile information
+- `/reset`: Resets the conversation thread
 
 ## Development
 
-The project is currently transitioning from a monolithic architecture to a multi-agent system based on the OpenAI Agents framework. The implementation is being done in phases, with each phase building on the previous one.
+### Project Structure
+
+```
+├── agents/
+│   ├── assistants_manager.py
+│   ├── delegation_assistant.py
+│   ├── profile_assistant.py
+│   ├── sports_assistant.py
+│   └── web_search_assistant.py
+├── utils/
+│   ├── telegram_bridge.py
+│   └── user_profile_store.py
+├── bot.py
+├── run.py
+├── requirements.txt
+└── tests/
+    ├── test_assistants.py
+    ├── test_profile_assistant.py
+    └── test_vector_store.py
+```
 
 ## License
 

@@ -9,6 +9,7 @@ import re
 import logging
 from typing import Dict, List, Optional, Any, Tuple, Union
 import json
+import traceback
 
 from .manager import AssistantsManager
 from .tools import (
@@ -76,6 +77,7 @@ class DelegationAssistant:
         
         # Define the tools for the delegation assistant
         tools = [
+            WebSearchTool().as_tool(),
             function_tool(
                 name="check_for_twitter_links",
                 description="Check if the messages contain Twitter links",
@@ -99,13 +101,13 @@ class DelegationAssistant:
             ),
             function_tool(
                 name="check_for_football_references",
-                description="Check if the messages contain football references",
+                description="Check if the messages contain references to football matches or teams",
                 parameters={
                     "type": "object",
                     "properties": {
                         "has_football_references": {
                             "type": "boolean",
-                            "description": "Whether the messages contain football references"
+                            "description": "Whether the messages contain references to football"
                         },
                         "references": {
                             "type": "array",
@@ -140,64 +142,96 @@ class DelegationAssistant:
                 }
             ),
             function_tool(
-                name="check_for_general_links",
-                description="Check if the messages contain general links",
+                name="check_for_sports_references",
+                description="Check if the messages contain references to sports other than football",
                 parameters={
                     "type": "object",
                     "properties": {
-                        "has_links": {
+                        "has_sports_references": {
                             "type": "boolean",
-                            "description": "Whether the messages contain links"
+                            "description": "Whether the messages contain references to sports other than football"
                         },
-                        "links": {
+                        "sports": {
                             "type": "array",
                             "items": {
                                 "type": "string"
                             },
-                            "description": "List of links found in the messages"
+                            "description": "List of sports mentioned in the messages"
+                        },
+                        "references": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "List of sports references found in the messages"
                         }
                     },
-                    "required": ["has_links", "links"]
+                    "required": ["has_sports_references", "sports", "references"]
                 }
             ),
-            WebSearchTool().as_tool()
+            function_tool(
+                name="get_user_profiles",
+                description="Get information about users from their profiles",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "user_ids": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "List of user IDs to get profiles for"
+                        }
+                    },
+                    "required": ["user_ids"]
+                }
+            )
         ]
         
         # Define the instructions for the delegation assistant
         instructions = """
-        You are the delegation assistant for a Telegram message summarization bot.
-        Your role is to analyze message content and delegate tasks to specialized assistants.
+        You are a delegation assistant for the Para-Phrase Generator, a Telegram bot that summarizes messages.
         
-        When processing a request to summarize messages:
-        1. Analyze the message content for special content types:
-           - Twitter links (including twitter.com, x.com, and t.co domains)
-           - Images
-           - Football scores or references
-           - Other interesting content
-        2. Determine which specialized assistants to call based on the content
-        3. Pass relevant context to each specialized assistant
-        4. Integrate the results into a coherent summary
+        Your task is to analyze messages and delegate tasks to specialized assistants based on the content.
         
-        Guidelines for delegation:
-        - For Twitter links: Call the Twitter assistant to extract and summarize tweet content
-        - For football references: Call the Football assistant to provide context about matches and players
-        - For photos: Call the Photo assistant to analyze image content and provide descriptions
-        - Pass the results and the selected tone to the appropriate tone assistant for final summarization
+        When summarizing messages, you should:
+        1. Check for Twitter links and delegate their processing to the Twitter assistant
+        2. Check for football references and delegate their processing to the Football assistant
+        3. Check for photos and delegate their processing to the Photo assistant
+        4. Check for references to other sports and use the web search tool to find information
+        5. Get user profiles to personalize the summary
+        6. Generate a summary in the requested tone
         
-        Do NOT summarize the content yourself. Your job is to delegate the summarization
-        to the specialized assistants and integrate their responses.
+        You can use the web search tool to find information about sports or other topics mentioned in the messages.
+        
+        The summary should be concise, informative, and match the requested tone. It should include:
+        - Key points from the conversation
+        - Information from Twitter links
+        - Information about football matches or teams
+        - Descriptions of photos
+        - Information about other sports
+        - Personalized references to users based on their profiles
+        
+        Always format the summary in a way that's easy to read and understand.
         """
         
-        # Create the delegation assistant
-        assistant = self.assistants_manager.create_assistant(
-            name="Delegation Assistant",
-            instructions=instructions,
-            model="gpt-4o",
-            tools=tools
-        )
+        # Check if the assistant already exists
+        existing_assistants = self.assistants_manager.list_assistants(name="Delegation Assistant")
         
-        self.assistant_id = assistant.id
-        logger.info(f"Delegation assistant initialized with ID {self.assistant_id}")
+        if existing_assistants:
+            # Use the existing assistant
+            self.assistant_id = existing_assistants[0].id
+            logger.info(f"Using existing delegation assistant: {self.assistant_id}")
+        else:
+            # Create a new assistant
+            assistant = self.assistants_manager.create_assistant(
+                name="Delegation Assistant",
+                instructions=instructions,
+                tools=tools,
+                model="gpt-4o"
+            )
+            self.assistant_id = assistant.id
+            logger.info(f"Created new delegation assistant: {self.assistant_id}")
     
     def _initialize_twitter_assistant(self):
         """
@@ -245,55 +279,46 @@ class DelegationAssistant:
     
     def _initialize_football_assistant(self):
         """
-        Initialize the Football assistant.
+        Initialize the football assistant.
         """
-        logger.info("Initializing Football assistant...")
+        logger.info("Initializing football assistant...")
         
-        # Define the tools for the Football assistant
+        # Define the tools for the football assistant
         tools = [
-            FootballInfoTool().as_tool(),
             WebSearchTool().as_tool()
         ]
         
-        # Define the instructions for the Football assistant
+        # Define the instructions for the football assistant
         instructions = """
-        You are the Football assistant for a Telegram message summarization bot.
-        Your role is to provide context and information about football (soccer) references.
+        You are a football information assistant for the Para-Phrase Generator.
         
-        When processing football references:
-        1. Identify teams, players, matches, and scores mentioned
-        2. Search for up-to-date information about the referenced matches or teams
-        3. Provide context to help understand the football discussion
-        4. Format the information in a way that can be integrated into the overall message summary
+        Your task is to provide information about football matches, teams, and players mentioned in messages.
         
-        Look for:
-        - Match scores (e.g., "3-0", "1-1")
-        - Team mentions (including nicknames and abbreviated forms)
-        - Player mentions (including excited references like "ENZOOOOO")
-        - Match minutes (e.g., "45'")
-        - Other football terminology
+        When processing football references, you should:
+        1. Use the web search tool to find real-time information about matches, scores, teams, and players
+        2. Provide concise and accurate information about the football references
+        3. Focus on the most relevant and recent information
         
-        Your output should be a JSON object containing:
-        - has_football_references: Whether football references were found
-        - references: An array of objects containing:
-          - text: The original text reference
-          - context: Additional context and information
-          - team_names: Names of teams mentioned (if any)
-          - player_names: Names of players mentioned (if any)
-          - scores: Match scores mentioned (if any)
-          - match_info: Information about the match (if any)
+        Your responses should be informative and to the point, focusing on the specific football references provided.
         """
         
-        # Create the Football assistant
-        assistant = self.assistants_manager.create_assistant(
-            name="Football Assistant",
-            instructions=instructions,
-            model="gpt-4o",
-            tools=tools
-        )
+        # Check if the assistant already exists
+        existing_assistants = self.assistants_manager.list_assistants(name="Football Assistant")
         
-        self.football_assistant_id = assistant.id
-        logger.info(f"Football assistant initialized with ID {self.football_assistant_id}")
+        if existing_assistants:
+            # Use the existing assistant
+            self.football_assistant_id = existing_assistants[0].id
+            logger.info(f"Using existing football assistant: {self.football_assistant_id}")
+        else:
+            # Create a new assistant
+            assistant = self.assistants_manager.create_assistant(
+                name="Football Assistant",
+                instructions=instructions,
+                tools=tools,
+                model="gpt-4o"
+            )
+            self.football_assistant_id = assistant.id
+            logger.info(f"Created new football assistant: {self.football_assistant_id}")
     
     def _initialize_photo_assistant(self):
         """
@@ -472,133 +497,142 @@ class DelegationAssistant:
         message_mapping: Optional[Dict[int, Dict]] = None
     ) -> str:
         """
-        Process a request to summarize messages.
+        Process a summary request.
         
         Args:
             messages (List[Dict[str, Any]]): List of message dictionaries
             tone (str): The tone to use for the summary
-            message_mapping (Optional[Dict[int, Dict]], optional): Mapping of message IDs
-                to message objects for linking. Defaults to None.
-        
+            message_mapping (Optional[Dict[int, Dict]]): Mapping of message IDs to messages
+            
         Returns:
-            str: The generated summary
+            str: The summary
         """
         logger.info(f"Processing summary request with {len(messages)} messages in {tone} tone")
+        
+        # Create a thread for the delegation assistant
+        thread = self.assistants_manager.create_thread()
         
         # Format the messages for the delegation assistant
         formatted_messages = self._format_messages_for_delegation(messages)
         
-        # Create a new thread for the delegation assistant
-        thread = await self.assistants_manager.async_create_thread()
-        thread_id = thread.id
-        logger.info(f"Created thread {thread_id} for delegation")
-        
         # Add the formatted messages to the thread
-        await self.assistants_manager.thread_manager.async_add_message(
-            thread_id=thread_id,
-            content=f"Summarize the following messages in {tone} tone:\n\n{formatted_messages}",
-            role="user"
+        self.assistants_manager.add_message(
+            thread_id=thread.id,
+            role="user",
+            content=f"Please summarize these messages in a {tone} tone:\n\n{formatted_messages}"
         )
         
         # Run the delegation assistant
-        run = await self.assistants_manager.async_run_assistant(
-            assistant_id=self.assistant_id,
-            thread_id=thread_id
+        run = await self.assistants_manager.create_run(
+            thread_id=thread.id,
+            assistant_id=self.assistant_id
         )
         
         # Wait for the run to complete
-        completed_run = await self.assistants_manager._async_run_until_complete(
-            thread_id=thread_id,
-            run_id=run.id,
-            timeout=120  # Increased timeout for longer message processing
+        run = await self.assistants_manager.wait_for_run(thread_id=thread.id, run_id=run.id)
+        
+        # Process the results
+        delegation_results = self._process_delegation_results(
+            self.assistants_manager.get_run_content(thread_id=thread.id, run_id=run.id)
         )
         
-        if completed_run.status != "completed":
-            logger.error(f"Delegation assistant run failed with status {completed_run.status}")
-            return f"Failed to generate summary: {completed_run.status}"
+        # Process Twitter content if needed
+        twitter_summaries = []
+        if delegation_results.get("has_twitter_links", False):
+            twitter_links = delegation_results.get("twitter_links", [])
+            if twitter_links:
+                twitter_summaries = await self._process_twitter_content(twitter_links, thread.id)
         
-        # Get the latest message from the delegation assistant
-        delegation_response = await self.assistants_manager.async_get_latest_message(thread_id)
+        # Process football content if needed
+        football_info = {}
+        if delegation_results.get("has_football_references", False):
+            football_references = delegation_results.get("football_references", [])
+            if football_references:
+                football_info = await self._process_football_content(football_references, thread.id)
         
-        if not delegation_response:
-            logger.error("No response from delegation assistant")
-            return "Failed to generate summary: no response from delegation assistant"
+        # Process photo content if needed
+        photo_descriptions = []
+        if delegation_results.get("has_photos", False):
+            photo_message_ids = delegation_results.get("photo_message_ids", [])
+            if photo_message_ids:
+                photo_descriptions = await self._process_photo_content(photo_message_ids, messages, thread.id)
         
-        # Extract the content from the delegation response
-        delegation_content = self.assistants_manager.get_message_content(delegation_response)
+        # Process sports content if needed
+        sports_info = {}
+        if delegation_results.get("has_sports_references", False):
+            sports = delegation_results.get("sports", [])
+            sports_references = delegation_results.get("sports_references", [])
+            if sports and sports_references:
+                sports_info = await self._process_sports_content(sports, sports_references, thread.id)
         
-        # Process the delegation results
-        delegation_results = self._process_delegation_results(delegation_content)
+        # Get user profiles if needed
+        user_profiles = {}
+        if delegation_results.get("user_ids", []):
+            user_ids = delegation_results.get("user_ids", [])
+            if user_ids:
+                user_profiles = await self._get_user_profiles(user_ids)
         
-        # Handle specialized content
-        twitter_results = await self._process_twitter_content(
-            delegation_results.get("twitter_links", []),
-            thread_id
+        # Create a new thread for the tone-specific assistant
+        tone_thread = self.assistants_manager.create_thread()
+        
+        # Prepare the content for the tone-specific assistant
+        tone_content = f"Please summarize these messages in a {tone} tone:\n\n{formatted_messages}\n\n"
+        
+        # Add Twitter summaries if available
+        if twitter_summaries:
+            tone_content += "\nTwitter content:\n"
+            for summary in twitter_summaries:
+                tone_content += f"- {summary.get('url')}: {summary.get('summary')}\n"
+        
+        # Add football information if available
+        if football_info:
+            tone_content += "\nFootball information:\n"
+            for reference, info in football_info.items():
+                tone_content += f"- {reference}: {info}\n"
+        
+        # Add photo descriptions if available
+        if photo_descriptions:
+            tone_content += "\nPhoto descriptions:\n"
+            for description in photo_descriptions:
+                tone_content += f"- {description.get('description')}\n"
+        
+        # Add sports information if available
+        if sports_info:
+            tone_content += "\nSports information:\n"
+            for sport, info in sports_info.items():
+                tone_content += f"- {sport}: {info}\n"
+        
+        # Add user profiles if available
+        if user_profiles:
+            tone_content += "\nUser profiles:\n"
+            for user_id, profile in user_profiles.items():
+                tone_content += f"- User {user_id}: {profile}\n"
+        
+        # Add the content to the tone-specific thread
+        self.assistants_manager.add_message(
+            thread_id=tone_thread.id,
+            role="user",
+            content=tone_content
         )
         
-        football_results = await self._process_football_content(
-            delegation_results.get("football_references", []),
-            thread_id
-        )
+        # Get the assistant ID for the requested tone
+        tone_assistant_id = self.tone_assistants.get(tone)
         
-        photo_results = await self._process_photo_content(
-            delegation_results.get("photo_message_ids", []),
-            messages,
-            thread_id
-        )
+        if not tone_assistant_id:
+            logger.warning(f"No assistant found for tone {tone}, using stoic tone")
+            tone_assistant_id = self.tone_assistants.get("stoic")
         
-        # Combine the results
-        combined_results = {
-            "messages": messages,
-            "twitter_summaries": twitter_results,
-            "football_context": football_results,
-            "photo_descriptions": photo_results,
-            "message_mapping": message_mapping or {}
-        }
-        
-        # Pass the combined results to the appropriate tone assistant
-        if tone not in self.tone_assistants:
-            logger.warning(f"Unknown tone '{tone}', defaulting to stoic")
-            tone = "stoic"
-        
-        # Create a new thread for the tone assistant
-        tone_thread = await self.assistants_manager.async_create_thread()
-        tone_thread_id = tone_thread.id
-        logger.info(f"Created thread {tone_thread_id} for {tone} tone assistant")
-        
-        # Add the combined results to the tone thread
-        await self.assistants_manager.thread_manager.async_add_message(
-            thread_id=tone_thread_id,
-            content=f"Generate a summary of these messages in {tone} tone:\n\n{json.dumps(combined_results, indent=2)}",
-            role="user"
-        )
-        
-        # Run the tone assistant
-        tone_run = await self.assistants_manager.async_run_assistant(
-            assistant_id=self.tone_assistants[tone],
-            thread_id=tone_thread_id
+        # Run the tone-specific assistant
+        tone_run = await self.assistants_manager.create_run(
+            thread_id=tone_thread.id,
+            assistant_id=tone_assistant_id
         )
         
         # Wait for the run to complete
-        completed_tone_run = await self.assistants_manager._async_run_until_complete(
-            thread_id=tone_thread_id,
-            run_id=tone_run.id,
-            timeout=60
-        )
+        tone_run = await self.assistants_manager.wait_for_run(thread_id=tone_thread.id, run_id=tone_run.id)
         
-        if completed_tone_run.status != "completed":
-            logger.error(f"Tone assistant run failed with status {completed_tone_run.status}")
-            return f"Failed to generate summary: {completed_tone_run.status}"
-        
-        # Get the latest message from the tone assistant
-        tone_response = await self.assistants_manager.async_get_latest_message(tone_thread_id)
-        
-        if not tone_response:
-            logger.error("No response from tone assistant")
-            return "Failed to generate summary: no response from tone assistant"
-        
-        # Extract the content from the tone response
-        summary = self.assistants_manager.get_message_content(tone_response)
+        # Get the summary from the tone-specific assistant
+        summary = self.assistants_manager.get_run_content(thread_id=tone_thread.id, run_id=tone_run.id)
         
         return summary
     
@@ -959,4 +993,161 @@ class DelegationAssistant:
                 }
                 photo_descriptions.append(description)
         
-        return photo_descriptions 
+        return photo_descriptions
+    
+    async def _process_sports_content(
+        self,
+        sports: List[str],
+        sports_references: List[str],
+        thread_id: str
+    ) -> Dict[str, str]:
+        """
+        Process sports content using web search.
+        
+        Args:
+            sports (List[str]): List of sports mentioned in the messages
+            sports_references (List[str]): List of sports references found in the messages
+            thread_id (str): The ID of the thread
+            
+        Returns:
+            Dict[str, str]: Dictionary mapping sports to information
+        """
+        logger.info(f"Processing sports content: {sports}")
+        
+        # Create a new thread for the web search
+        search_thread = self.assistants_manager.create_thread()
+        
+        # Prepare the content for the web search
+        search_content = "Please search for information about the following sports references:\n\n"
+        
+        for i, (sport, reference) in enumerate(zip(sports, sports_references)):
+            search_content += f"{i+1}. Sport: {sport}, Reference: {reference}\n"
+        
+        # Add the content to the search thread
+        self.assistants_manager.add_message(
+            thread_id=search_thread.id,
+            role="user",
+            content=search_content
+        )
+        
+        # Create a web search assistant
+        web_search_assistant = self.assistants_manager.create_assistant(
+            name="Sports Web Search Assistant",
+            instructions="""
+            You are a sports information assistant. Your task is to search for information about sports references.
+            
+            For each sports reference, use the web search tool to find the most relevant and recent information.
+            
+            Provide concise and accurate information about each reference, focusing on:
+            - Match results and scores
+            - Team or player statistics
+            - Recent news or developments
+            
+            Format your response as a dictionary where the keys are the sports and the values are the information.
+            """,
+            tools=[WebSearchTool().as_tool()],
+            model="gpt-4o"
+        )
+        
+        # Run the web search assistant
+        search_run = await self.assistants_manager.create_run(
+            thread_id=search_thread.id,
+            assistant_id=web_search_assistant.id
+        )
+        
+        # Wait for the run to complete
+        search_run = await self.assistants_manager.wait_for_run(thread_id=search_thread.id, run_id=search_run.id)
+        
+        # Get the search results
+        search_results = self.assistants_manager.get_run_content(thread_id=search_thread.id, run_id=search_run.id)
+        
+        # Parse the search results
+        sports_info = {}
+        
+        try:
+            # Try to parse the results as a dictionary
+            import re
+            import json
+            
+            # Look for a dictionary-like structure in the results
+            dict_pattern = r'\{[^{}]*\}'
+            dict_match = re.search(dict_pattern, search_results)
+            
+            if dict_match:
+                dict_str = dict_match.group(0)
+                sports_info = json.loads(dict_str)
+            else:
+                # If no dictionary is found, create a simple mapping
+                for sport, reference in zip(sports, sports_references):
+                    sports_info[sport] = f"Information about {reference}"
+        except Exception as e:
+            logger.error(f"Error parsing sports search results: {e}")
+            logger.error(traceback.format_exc())
+            
+            # Fallback: create a simple mapping
+            for sport, reference in zip(sports, sports_references):
+                sports_info[sport] = f"Information about {reference}"
+        
+        return sports_info
+    
+    async def _get_user_profiles(self, user_ids: List[str]) -> Dict[str, str]:
+        """
+        Get user profiles from the vector store.
+        
+        Args:
+            user_ids (List[str]): List of user IDs
+            
+        Returns:
+            Dict[str, str]: Dictionary mapping user IDs to profile summaries
+        """
+        logger.info(f"Getting user profiles for {len(user_ids)} users")
+        
+        # Import the profile store
+        from ..vector_store import UserProfileStore
+        profile_store = UserProfileStore()
+        
+        # Get the profiles
+        profiles = {}
+        
+        for user_id in user_ids:
+            try:
+                profile = profile_store.get_user_profile(user_id)
+                
+                if profile:
+                    # Extract interests
+                    interests = profile_store.extract_user_interests(user_id)
+                    
+                    # Create a summary of the profile
+                    summary = f"User {user_id}"
+                    
+                    # Add basic information
+                    metadata = profile.get("metadata", {})
+                    if metadata.get("first_name"):
+                        summary += f", {metadata['first_name']}"
+                    
+                    if metadata.get("last_name"):
+                        summary += f" {metadata['last_name']}"
+                    
+                    if metadata.get("username"):
+                        summary += f" (@{metadata['username']})"
+                    
+                    # Add interests
+                    if interests:
+                        summary += ". Interests: "
+                        interest_parts = []
+                        
+                        for category, items in interests.items():
+                            if items:
+                                interest_parts.append(f"{category}: {', '.join(items)}")
+                        
+                        summary += "; ".join(interest_parts)
+                    
+                    profiles[user_id] = summary
+                else:
+                    profiles[user_id] = f"No profile found for user {user_id}"
+            except Exception as e:
+                logger.error(f"Error getting profile for user {user_id}: {e}")
+                logger.error(traceback.format_exc())
+                profiles[user_id] = f"Error getting profile for user {user_id}"
+        
+        return profiles 
