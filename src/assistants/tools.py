@@ -46,7 +46,8 @@ class WebSearchTool:
     Web search tool for the OpenAI Assistants API.
     
     This class provides a web search tool that can be used with the OpenAI Assistants API.
-    The actual search is performed by OpenAI's built-in search capability.
+    The actual search is performed by a function-based implementation that can be handled
+    by the application.
     
     Usage:
         tools = [WebSearchTool().as_tool()]
@@ -58,34 +59,24 @@ class WebSearchTool:
         Get the web search tool definition.
         
         Returns:
-            Dict: A web search tool definition
+            Dict: A web search tool definition as a function
         """
-        try:
-            # First try with web_search type - newer OpenAI API versions
-            return {
-                "type": "web_search"
-            }
-        except Exception as e:
-            # If web_search isn't supported (older API or restricted environment),
-            # fall back to a function-based implementation
-            if "invalid_value" in str(e).lower() or "web_search" in str(e).lower():
-                return function_tool(
-                    name="web_search",
-                    description="Search the web for information",
-                    parameters={
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The search query"
-                            }
-                        },
-                        "required": ["query"]
+        # Use function-based implementation instead of web_search type
+        # since web_search is not supported in all environments
+        return function_tool(
+            name="web_search",
+            description="Search the web for information",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
                     }
-                )
-            else:
-                # If it's another type of error, re-raise it
-                raise
+                },
+                "required": ["query"]
+            }
+        )
 
 
 class CodeInterpreterTool:
