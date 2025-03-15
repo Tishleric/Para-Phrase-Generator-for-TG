@@ -2,32 +2,27 @@
 # Main file to run the Telegram bot for message summarization
 import telebot
 import os
-from summarizer import summarize_messages
+import logging
+import traceback
 from dotenv import load_dotenv
+from typing import Dict, List, Any, Optional, Union
 
-def is_all_caps(text):
-    if not text:  # Handle empty or None text
-        return False
-    has_upper = any(c.isupper() for c in text)
-    has_lower = any(c.islower() for c in text)
-    return has_upper and not has_lower
+# Import utility functions and classes
+from src.telegram_bridge import TelegramBridge, format_error_message
+from src.utils import extract_command_args
 
-def extract_all_caps_sequences(text):
-    if not text:
-        return []
-    words = text.split()
-    sequences = []
-    current_sequence = []
-    for word in words:
-        if word.isupper() and any(c.isalpha() for c in word):  # Must be all caps and have at least one letter
-            current_sequence.append(word)
-        else:
-            if current_sequence:  # End of a sequence
-                sequences.append(" ".join(current_sequence))
-                current_sequence = []
-    if current_sequence:  # Add the last sequence if exists
-        sequences.append(" ".join(current_sequence))
-    return sequences
+# Import configuration
+from src.config import (
+    DEBUG_MODE, USE_AGENT_SYSTEM, MAX_MESSAGES_PER_CHAT,
+    AVAILABLE_TONES, DEFAULT_TONE
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG_MODE else logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -46,76 +41,138 @@ bot = telebot.TeleBot(os.environ.get("TELEGRAM_BOT_TOKEN"))
 chat_history = {}  # {chat_id: [list of messages]}
 chat_tones = {}  # {chat_id: tone}
 
+# Initialize the TelegramBridge for agent integration
+telegram_bridge = TelegramBridge(chat_history, chat_tones)
+
 @bot.message_handler(commands=['tone'])
 def set_tone(message):
-    chat_id = message.chat.id
     try:
-        tone = message.text.split()[1].lower()
-        if tone in ['stoic', 'chaotic', 'pubbie', 'deaf']:
-            chat_tones[chat_id] = tone
-            bot.reply_to(message, f"Tone set to {tone}.")
-        else:
-            bot.reply_to(message, "Invalid tone. Use: stoic, chaotic, pubbie, deaf.")
-    except IndexError:
-        bot.reply_to(message, "Please provide a tone (e.g., /tone pubbie).")
+        # Extract the tone from the message
+        command, args = extract_command_args(message.text)
+        
+        if not args:
+            bot.reply_to(message, f"Please specify a tone. Available tones: {', '.join(AVAILABLE_TONES)}")
+            return
+        
+        tone = args[0].lower()
+        
+        if USE_AGENT_SYSTEM:
+            # Use the TelegramBridge to handle the command
+            response = telegram_bridge.handle_command(message.__dict__, command, args)
+            
+            if response:
+                bot.reply_to(message, response)
+                return
+        
+        # Legacy system (or agent system not enabled)
+        if tone not in AVAILABLE_TONES:
+            bot.reply_to(message, f"Invalid tone. Available tones: {', '.join(AVAILABLE_TONES)}")
+            return
+        
+        chat_id = str(message.chat.id)
+        chat_tones[chat_id] = tone
+        
+        bot.reply_to(message, f"Tone set to {tone}!")
+        
+    except Exception as e:
+        logger.error(f"Error in set_tone: {e}")
+        logger.error(traceback.format_exc())
+        bot.reply_to(message, format_error_message(e))
 
 @bot.message_handler(commands=['last'])
 def last_messages(message):
-    chat_id = message.chat.id
     try:
-        n = int(message.text.split()[1])
-        if chat_id not in chat_history or len(chat_history[chat_id]) == 0:
-            bot.reply_to(message, "No messages to summarize yet!")
+        # Extract the count from the message
+        command, args = extract_command_args(message.text)
+        
+        if not args:
+            bot.reply_to(message, "Please specify the number of messages to summarize.")
             return
-        messages = chat_history[chat_id][-n:] if n <= len(chat_history[chat_id]) else chat_history[chat_id]
-        tone = chat_tones.get(chat_id, 'stoic')
         
-        formatted_messages = []
-        if tone == "deaf":
-            for msg in messages:
-                if msg.get("text"):  # Only process messages with text
-                    sequences = extract_all_caps_sequences(msg["text"])
-                    for seq in sequences:
-                        formatted_messages.append(f"{msg['sender']}: {seq}")
-            if not formatted_messages:
-                bot.reply_to(message, "I didn't hear anything.")
+        try:
+            count = int(args[0])
+        except ValueError:
+            bot.reply_to(message, "Please specify a valid number of messages to summarize.")
+            return
+        
+        if count <= 0:
+            bot.reply_to(message, "Please specify a positive number of messages to summarize.")
+            return
+        
+        chat_id = str(message.chat.id)
+        
+        if chat_id not in chat_history or not chat_history[chat_id]:
+            bot.reply_to(message, "No messages to summarize.")
+            return
+        
+        # Send a "processing" message to indicate the bot is working
+        processing_message = bot.reply_to(message, "Processing your request... This may take a moment.")
+        
+        if USE_AGENT_SYSTEM:
+            # Use the TelegramBridge to handle the command
+            response = telegram_bridge.handle_command(message.__dict__, command, args)
+            
+            if response:
+                # Delete the processing message
+                bot.delete_message(chat_id=message.chat.id, message_id=processing_message.message_id)
+                
+                # Handle potential parsing of HTML in Telegram
+                try:
+                    bot.reply_to(message, response, parse_mode="HTML")
+                except Exception as html_error:
+                    logger.error(f"Error sending HTML message: {html_error}")
+                    # Fall back to plain text if HTML parsing fails
+                    bot.reply_to(message, response)
                 return
-        else:
-            for msg in messages:
-                if msg.get("is_image"):
-                    formatted_messages.append(f"{msg['sender']} sent an image.")
-                elif msg.get("reply_to"):
-                    original = msg['reply_to']
-                    formatted_messages.append(f"{msg['sender']} replied to {original['sender']}'s message '{original['text']}': {msg['text']}")
-                else:
-                    formatted_messages.append(f"{msg['sender']}: {msg['text']}")
         
-        summary = summarize_messages(formatted_messages, tone)
+        # Legacy system (or agent system not enabled)
+        # Get the tone for this chat
+        tone = chat_tones.get(chat_id, DEFAULT_TONE)
+        
+        # Call the legacy summarization method
+        from summarizer import summarize_messages
+        
+        # Get the most recent 'count' messages
+        messages = chat_history[chat_id][-count:] if count <= len(chat_history[chat_id]) else chat_history[chat_id]
+        
+        summary = summarize_messages(messages, tone)
+        
+        # Delete the processing message
+        bot.delete_message(chat_id=message.chat.id, message_id=processing_message.message_id)
+        
         bot.reply_to(message, summary)
-    except (IndexError, ValueError):
-        bot.reply_to(message, "Please provide a valid number (e.g., /last 10).")
+        
+    except Exception as e:
+        logger.error(f"Error in last_messages: {e}")
+        logger.error(traceback.format_exc())
+        bot.reply_to(message, format_error_message(e))
 
 @bot.message_handler(func=lambda message: True)
 def store_message(message):
-    chat_id = message.chat.id
-    sender = message.from_user.first_name or message.from_user.username
-    msg_data = {
-        "sender": sender,
-        "text": message.text,
-        "is_image": bool(message.photo),
-        "reply_to": None
-    }
-    if message.reply_to_message:
-        original_sender = message.reply_to_message.from_user.first_name or message.reply_to_message.from_user.username
-        original_text = message.reply_to_message.text or "[non-text message]"
-        msg_data["reply_to"] = {
-            "sender": original_sender,
-            "text": original_text
-        }
-    if chat_id not in chat_history:
-        chat_history[chat_id] = []
-    chat_history[chat_id].append(msg_data)
-    if len(chat_history[chat_id]) > 100:
-        chat_history[chat_id].pop(0)
+    try:
+        chat_id = str(message.chat.id)
+        
+        # Store the message using the TelegramBridge
+        telegram_bridge.store_message(message.__dict__)
+        
+    except Exception as e:
+        logger.error(f"Error in store_message: {e}")
+        logger.error(traceback.format_exc())
 
-bot.polling() 
+if __name__ == "__main__":
+    print("Bot is starting...")
+    
+    # Log startup information
+    logger.info("Para-Phrase Generator is starting")
+    logger.info(f"Debug mode: {DEBUG_MODE}")
+    logger.info(f"Agent system: {'Enabled' if USE_AGENT_SYSTEM else 'Disabled'}")
+    
+    # Check for API keys
+    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
+        logger.warning("No Anthropic or OpenAI API key found. Summarization will fail.")
+    
+    if USE_AGENT_SYSTEM and not os.environ.get("OPENAI_API_KEY"):
+        logger.warning("No OpenAI API key found. Agent system will fail.")
+    
+    # Start the bot
+    bot.polling(none_stop=True) 
