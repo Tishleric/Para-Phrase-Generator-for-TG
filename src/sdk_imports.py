@@ -30,10 +30,95 @@ try:
     import openai
     from openai import OpenAI, AsyncOpenAI
     from openai._streaming import Stream
-    from openai.types.beta.threads import ThreadMessage
-    from openai.types.beta.threads.runs import Run, RunStatus
-    from openai.types.beta.threads.runs.tool_call import ToolCall
-    from openai.types.beta.assistants import Assistant
+    
+    # Try to import ThreadMessage, if not available create compatibility class
+    try:
+        from openai.types.beta.threads import ThreadMessage
+        logger.info("ThreadMessage imported successfully")
+    except ImportError:
+        logger.warning("ThreadMessage not found in openai.types.beta.threads, creating compatibility class")
+        class ThreadMessage:
+            def __init__(self, id=None, object=None, created_at=None, thread_id=None, role=None, content=None, file_ids=None, assistant_id=None, run_id=None, metadata=None):
+                self.id = id
+                self.object = object
+                self.created_at = created_at
+                self.thread_id = thread_id
+                self.role = role
+                self.content = content
+                self.file_ids = file_ids or []
+                self.assistant_id = assistant_id
+                self.run_id = run_id
+                self.metadata = metadata or {}
+    
+    # Try to import Run and RunStatus, if not available create compatibility classes
+    try:
+        from openai.types.beta.threads.runs import Run, RunStatus
+        logger.info("Run and RunStatus imported successfully")
+    except ImportError:
+        logger.warning("Run or ToolCall not found in expected location, creating compatibility classes")
+        # Create a simple RunStatus enum-like class
+        class RunStatus:
+            QUEUED = "queued"
+            IN_PROGRESS = "in_progress"
+            REQUIRES_ACTION = "requires_action"
+            CANCELLING = "cancelling"
+            CANCELLED = "cancelled"
+            FAILED = "failed"
+            COMPLETED = "completed"
+            EXPIRED = "expired"
+        
+        # Create a simple Run class
+        class Run:
+            def __init__(self, id=None, object=None, created_at=None, thread_id=None, assistant_id=None, status=None, required_action=None, last_error=None, expires_at=None, started_at=None, cancelled_at=None, failed_at=None, completed_at=None, model=None, instructions=None, tools=None, file_ids=None, metadata=None):
+                self.id = id
+                self.object = object
+                self.created_at = created_at
+                self.thread_id = thread_id
+                self.assistant_id = assistant_id
+                self.status = status
+                self.required_action = required_action
+                self.last_error = last_error
+                self.expires_at = expires_at
+                self.started_at = started_at
+                self.cancelled_at = cancelled_at
+                self.failed_at = failed_at
+                self.completed_at = completed_at
+                self.model = model
+                self.instructions = instructions
+                self.tools = tools or []
+                self.file_ids = file_ids or []
+                self.metadata = metadata or {}
+    
+    # Try to import ToolCall, if not available create compatibility class
+    try:
+        from openai.types.beta.threads.runs.tool_call import ToolCall
+        logger.info("ToolCall imported successfully")
+    except ImportError:
+        logger.warning("ToolCall not found in expected location, creating compatibility class")
+        class ToolCall:
+            def __init__(self, id=None, type=None, function=None):
+                self.id = id
+                self.type = type
+                self.function = function
+    
+    # Try to import Assistant, if not available create compatibility class
+    try:
+        from openai.types.beta.assistants import Assistant
+        logger.info("Assistant imported successfully")
+    except ImportError:
+        logger.warning("Assistant not found in expected location, creating compatibility class")
+        class Assistant:
+            def __init__(self, id=None, object=None, created_at=None, name=None, description=None, model=None, instructions=None, tools=None, file_ids=None, metadata=None):
+                self.id = id
+                self.object = object
+                self.created_at = created_at
+                self.name = name
+                self.description = description
+                self.model = model
+                self.instructions = instructions
+                self.tools = tools or []
+                self.file_ids = file_ids or []
+                self.metadata = metadata or {}
 
     # Set OPENAI_API_KEY if available
     openai_api_key = os.environ.get("OPENAI_API_KEY")

@@ -12,10 +12,10 @@ import logging
 from typing import Dict, List, Any, Optional, Union, Tuple
 import json
 
-from openai import OpenAI, AsyncOpenAI
-from openai.types.beta.threads import ThreadMessage
-from openai.types.beta.threads.runs import Run, RunStatus
-from openai.types.beta.assistants import Assistant
+# Use the compatibility layer from sdk_imports instead of direct imports
+from ..sdk_imports import (
+    OpenAI, AsyncOpenAI, ThreadMessage, Run, RunStatus, Assistant
+)
 
 # Configure logging
 logging.basicConfig(
